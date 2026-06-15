@@ -1,48 +1,48 @@
-# 🦅 EAGLE EYE — Otonom Sinyal Botu
+# 🦅 EAGLE EYE — Otonom Motor Botu
 
-GitHub Actions üzerinde **kendi kendine** çalışır. PC/telefon açık olmasına gerek yok.
-Uygulamanın kullandığı **aynı MCP tarayıcısını** çağırır, sinyalleri **Telegram'a** iter.
+GitHub Actions üzerinde **kendi kendine** çalışır. PC/telefon kapalı olabilir.
+Uygulamanın **kendi motorunu** (getSignals, 19 indikatör) buluta taşır.
 
-## Nasıl çalışır
-- `.github/workflows/trade.yml` → hafta içi 3 kez (açılış / öğle / kapanışa yakın) tetiklenir.
-- `bot/scan.mjs` → `XU100` için `bullish_momentum` + `oversold` taraması yapar, en güçlü 8 hisseyi Telegram'a yollar.
-- Gist hafızası (opsiyonel) → aynı gün aynı sinyali tekrar göndermez (spam yok).
+## Ne yapar
+1. **197 BIST hissesini** uygulamadaki AYNI motorla tarar → **AL/SAT sinyalleri** → Telegram
+   (HİSSE TARA'nın aynısı — 15m mum + günlük üst-trend, güven ≥ %50)
+2. **AI TRADER** sanal portföyünü yönetir → pozisyon **açar/kapatır** (TP / Zarar Durdur / Trailing / SAT sinyali) → Telegram
+3. Hafta içi 10:00 / 12:00 / 14:00 / 16:00 / 18:00 (İstanbul) otomatik çalışır
 
-## Kurulum (5 dakika)
+Dosyalar:
+- `engine.mjs` — uygulamadan birebir çıkarılmış motor (saf JS)
+- `data.mjs` — Yahoo Finance veri (15m + günlük, doğrudan)
+- `run.mjs` — tarama + paper trading + Telegram
+- `symbols.json` / `sectors.json` — BIST hisse listesi + sektör eşlemesi
 
-### 1. Telegram botu
-1. Telegram'da **@BotFather** → `/newbot` → token al (`123456:ABC...`).
-2. **@userinfobot**'a yaz → **chat ID**'ni al (`123456789`).
+## Kurulum
 
-### 2. GitHub'a yükle
-```bash
-cd bist-bot
-git init && git add . && git commit -m "EAGLE EYE bot"
-gh repo create eagle-bist-bot --private --source=. --push
-```
+### 1. Telegram (zaten yaptıysan atla)
+- **@BotFather** → `/newbot` → token al
+- **@userinfobot** → chat ID al
+- Kendi botuna `/start` bas
+
+### 2. Gist (AI TRADER için ZORUNLU)
+Sanal portföy ve sinyal hafızası burada saklanır. Olmadan AI TRADER çalışmaz (her run sıfırlanır).
+1. **Personal Access Token (gist izinli):** github.com → Settings → Developer settings → Personal access tokens → **Tokens (classic)** → Generate new → sadece **`gist`** kutusunu işaretle → oluştur → kopyala.
+2. **Boş bir gist:** gist.github.com → dosya adı `feybot_paper.json`, içerik `{}` → **Create secret gist** → URL'deki ID'yi kopyala (`gist.github.com/kullanıcı/SUNU_KOPYALA`).
 
 ### 3. Secrets ekle
-Repo → **Settings → Secrets and variables → Actions → New repository secret**:
+Repo → Settings → Secrets and variables → Actions → New repository secret:
 
 | Secret | Zorunlu | Değer |
 |---|---|---|
-| `TG_TOKEN` | ✅ | BotFather token'ı |
+| `TG_TOKEN` | ✅ | BotFather token |
 | `TG_CHAT` | ✅ | userinfobot chat ID |
-| `GH_GIST_TOKEN` | opsiyonel | `gist` izinli Personal Access Token (spam önleme için) |
-| `GIST_ID` | opsiyonel | Boş bir secret gist'in ID'si |
+| `GH_GIST_TOKEN` | ✅ (AI TRADER için) | gist izinli PAT |
+| `GIST_ID` | ✅ (AI TRADER için) | boş gist'in ID'si |
 
-### 4. Test et
-Repo → **Actions → EAGLE EYE → Run workflow** → birkaç saniye sonra Telegram'a mesaj düşmeli.
+### 4. Test
+Actions → **EAGLE EYE — Otonom Motor Botu** → Run workflow → ~15 sn → Telegram'a sinyaller + (varsa) işlem bildirimi düşer.
 
 ## Yerel test
 ```bash
-TG_TOKEN=xxx TG_CHAT=yyy node bot/scan.mjs
+TG_TOKEN=xxx TG_CHAT=yyy GH_GIST_TOKEN=zzz GIST_ID=www node bot/run.mjs
 ```
 
-## Ayarlanabilir env
-- `INDEX` — `XU100` (varsayılan), `XU030`, `XBANK`, `XUSIN`
-- `PRESETS` — virgülle: `bullish_momentum,oversold,supertrend_bullish`
-- `TF` — `1d` (varsayılan)
-- `TOP_N` — kaç hisse listelensin (varsayılan 8)
-
-> ⚠ Yatırım tavsiyesi değildir. Veriler ~15dk gecikmeli olabilir.
+> ⚠ Yatırım tavsiyesi değildir. Veriler ~15dk gecikmeli olabilir. Sanal portföy gerçek para değildir.

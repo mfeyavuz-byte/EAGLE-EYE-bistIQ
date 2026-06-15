@@ -1,16 +1,18 @@
-name: EAGLE EYE — Otonom Sinyal Tarayıcı
+name: EAGLE EYE — Otonom Motor Botu
 
 on:
   schedule:
     # BIST saatleri (UTC). İstanbul = UTC+3. Hafta içi.
-    # 07:05 UTC = 10:05 açılış · 11:00 UTC = 14:00 · 14:30 UTC = 17:30 kapanışa yakın
-    - cron: "5 7 * * 1-5"
+    # 10:00 / 12:00 / 14:00 / 16:00 / 18:00 İstanbul = pozisyon yönetimi + sinyal taraması
+    - cron: "0 7 * * 1-5"
+    - cron: "0 9 * * 1-5"
     - cron: "0 11 * * 1-5"
-    - cron: "30 14 * * 1-5"
-  workflow_dispatch: # elle de tetiklenebilir (Actions sekmesi → Run workflow)
+    - cron: "0 13 * * 1-5"
+    - cron: "0 15 * * 1-5"
+  workflow_dispatch: # elle tetik (Actions sekmesi)
 
 jobs:
-  scan:
+  run:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -18,14 +20,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Tara ve Telegram'a bildir
+      - name: Motorla tara + AI TRADER yönet + Telegram
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT: ${{ secrets.TG_CHAT }}
           GH_GIST_TOKEN: ${{ secrets.GH_GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
-          INDEX: XU100
-          PRESETS: bullish_momentum,oversold
-          TF: "1d"
-          TOP_N: "8"
-        run: node bot/scan.mjs
+        run: node bot/run.mjs
