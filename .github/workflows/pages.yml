@@ -1,0 +1,37 @@
+name: Uygulamayı GitHub Pages'e yayınla
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "standalone/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch: # elle de tetiklenebilir
+
+# Pages deploy için gerekli izinler
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Aynı anda tek deploy
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: standalone/ klasörünü paketle
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: standalone
+      - name: Pages'e deploy et
+        id: deployment
+        uses: actions/deploy-pages@v4
