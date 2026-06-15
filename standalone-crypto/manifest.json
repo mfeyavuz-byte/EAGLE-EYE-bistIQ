@@ -1,0 +1,29 @@
+{
+  "short_name": "kriptoIQ",
+  "name": "EAGLE EYE: kriptoIQ — Kripto Sinyal",
+  "description": "Kripto (Binance) canli sinyal + AI karar motoru",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#f7f8fb",
+  "background_color": "#f7f8fb",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": [
+    "finance",
+    "productivity"
+  ]
+}
