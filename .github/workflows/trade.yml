@@ -1,25 +1,52 @@
 name: EAGLE EYE — Otonom Motor Botu
 
+# NOT: GitHub'ın zamanlanmış (cron) tetikleri güvenilmezdir — çoğu tetiği atlar/geciktirir.
+# Bu yüzden cron yalnızca DÖNGÜYÜ BAŞLATIR; iş içinde piyasa kapanana dek her 20 dk tarar.
+# Birden çok başlangıç saati = biri kaçarsa diğeri yakalar. Repo public → Actions dakikası sınırsız.
 on:
   schedule:
-    # Her 20 dakikada bir, 07:00–15:59 UTC = 10:00–18:59 İstanbul, hafta içi.
-    # = ~27 tarama/gün (≥20). Pozisyon yönetimi her run; Telegram raporu saat başı.
-    - cron: "*/20 7-15 * * 1-5"
-  workflow_dispatch: # elle tetik (Actions sekmesi)
+    - cron: "0 7 * * 1-5"    # ~10:00 İstanbul (asıl başlangıç)
+    - cron: "0 8 * * 1-5"    # ~11:00 (yedek)
+    - cron: "0 9 * * 1-5"    # ~12:00 (yedek)
+    - cron: "0 11 * * 1-5"   # ~14:00 (yedek)
+    - cron: "0 13 * * 1-5"   # ~16:00 (yedek)
+  workflow_dispatch:
+
+concurrency:
+  group: eagle-loop
+  cancel-in-progress: false   # aynı anda tek çalışma (üst üste binmesin)
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Motorla tara + AI TRADER yönet + Telegram
+      - name: Piyasa saatleri boyunca her 20 dk tara + AI TRADER yönet
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT: ${{ secrets.TG_CHAT }}
           GH_GIST_TOKEN: ${{ secrets.GH_GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
-        run: node bot/run.mjs
+        run: |
+          set +e
+          echo "=== İlk tarama (event: $GITHUB_EVENT_NAME) ==="
+          node bot/run.mjs
+          # Manuel tetikse tek seferlik çalış (test için), döngüye girme
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Manuel tetik — tek run, çıkılıyor."; exit 0
+          fi
+          # Zamanlanmışsa: İstanbul 10:00–18:00 arası her 20 dk
+          for i in $(seq 2 16); do
+            H=$(TZ=Europe/Istanbul date +%-H)
+            if [ "$H" -ge 18 ] || [ "$H" -lt 10 ]; then
+              echo "Piyasa saati dışı (İstanbul $H) — döngü bitti."; break
+            fi
+            sleep 1200
+            echo "=== İterasyon $i (İstanbul saat $(TZ=Europe/Istanbul date +%H:%M)) ==="
+            node bot/run.mjs
+          done
+          echo "Döngü tamamlandı."
