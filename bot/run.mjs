@@ -6,6 +6,7 @@
 
 import { getSignals, enrichData, getHigherTrend } from "./engine.mjs";
 import { fetch15m, fetchDaily, fetchIndexClose } from "./data.mjs";
+import { fetchNews } from "./news.mjs";
 import syms from "./symbols.json" with { type: "json" };
 import SECTORS from "./sectors.json" with { type: "json" };
 
@@ -175,6 +176,17 @@ async function main() {
   console.log(`Tarama bitti ${((Date.now() - t0) / 1e3).toFixed(1)}s · ${signals.length} sinyal (${signals.filter(s => s.signal === "AL").length} AL, ${signals.filter(s => s.signal === "SAT").length} SAT)`);
 
   const xuNow = await fetchIndexClose("XU100").catch(() => null);  // endeks (XU100) anlık
+
+  // Haberleri çek ve Gist'e yaz (app proxy başarısız olursa oradan okur)
+  if (GIST_ID && GIST_TOKEN) {
+    try {
+      const news = await fetchNews();
+      if (news.length) {
+        await gistPut({ "eagle_news.json": { content: JSON.stringify({ ts: Date.now(), items: news }) } });
+        console.log(`Haber: ${news.length} başlık Gist'e yazıldı`);
+      }
+    } catch (e) { console.error("Haber hatası:", e.message); }
+  }
 
   const notify = [];
   await notifyScan(signals, notify);          // HİSSE TARA AL/SAT
