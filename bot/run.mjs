@@ -5,7 +5,7 @@
 // State Gist'te (feybot_paper.json). Bağımlılıksız (Node 20+ ESM).
 
 import { getSignals, enrichData, getHigherTrend } from "./engine.mjs";
-import { fetch15m, fetchDaily } from "./data.mjs";
+import { fetch15m, fetchDaily, fetchIndexClose } from "./data.mjs";
 import syms from "./symbols.json" with { type: "json" };
 import SECTORS from "./sectors.json" with { type: "json" };
 
@@ -87,11 +87,12 @@ async function currentPrice(sym, scanMap) {
   return s.length ? s[s.length - 1].close : null;
 }
 
-async function runPaper(signals, notify) {
+async function runPaper(signals, notify, xuNow) {
   const today = new Date().toISOString().slice(0, 10);
   let st = await gistGet(PAPER_FILE, null);
-  if (!st || typeof st.cash !== "number") st = { cash: 1e5, start: 1e5, pos: {}, trades: [], dayKey: today, dayStart: 1e5, startDate: today };
+  if (!st || typeof st.cash !== "number") st = { cash: 1e5, start: 1e5, pos: {}, trades: [], dayKey: today, dayStart: 1e5, startDate: today, xuStart: xuNow || null };
   st.pos = st.pos || {}; st.trades = st.trades || [];
+  if (!st.xuStart && xuNow) st.xuStart = xuNow;   // endeks başlangıcı (relatif getiri için)
   const scanMap = Object.fromEntries(signals.map(s => [s.sym, s]));
   const satSet = new Set(signals.filter(s => s.signal === "SAT").map(s => s.sym));
   const opened = [], closed = [];
@@ -100,6 +101,7 @@ async function runPaper(signals, notify) {
   for (const [sym, ps] of Object.entries({ ...st.pos })) {
     const cur = await currentPrice(sym, scanMap);
     if (cur == null || !isFinite(cur)) continue;
+    ps.last = cur;   // güncel fiyatı pozisyona yaz (performans/valuation için)
     const pct = (cur - ps.entry) / ps.entry;
     if (pct >= 0.02) { const np = Math.max(ps.peak || 0, cur); if (np > (ps.peak || 0)) ps.peak = np; }
     const trailLv = ps.peak ? +(ps.peak * 0.985).toFixed(2) : null;
@@ -117,18 +119,18 @@ async function runPaper(signals, notify) {
   }
 
   // --- AÇMA: AL sinyalleri ---
+  // Kural: pozisyon başına TOPLAM portföyün %10'u, toplam EN FAZLA 5 farklı hisse.
+  const MAX_POS = 5, POS_PCT = 0.10;
   const equity = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * ((scanMap[s]?.price) || p.entry), 0);
   const ddOK = !st.dayStart || (equity - st.dayStart) / st.dayStart > -0.03;
   for (const sig of signals.filter(s => s.signal === "AL")) {
+    if (Object.keys(st.pos).length >= MAX_POS) break;   // en fazla 5 pozisyon
     const sym = sig.sym;
     if (st.pos[sym] || !ddOK) continue;
-    const sec = sectorOf(sym);
-    if (sec && Object.keys(st.pos).filter(s => SECTORS[sec]?.includes(s)).length >= 3) continue;
     const conf = sig.confidence || 0;
-    const pctSize = conf >= 80 ? 0.25 : conf >= 60 ? 0.15 : 0.08;
     const j = sig.price;
-    const Q = Math.floor(st.cash * pctSize / j);
-    if (Q > 0) {
+    const Q = Math.floor(equity * POS_PCT / j);          // toplam portföyün %10'u
+    if (Q > 0 && Q * j <= st.cash) {
       st.cash -= Q * j;
       const sl = sig.stopLoss || +(j * 0.99).toFixed(2), tp = sig.target1 || +(j * 1.04).toFixed(2);
       st.pos[sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0 };
@@ -136,11 +138,11 @@ async function runPaper(signals, notify) {
     }
   }
 
-  if (opened.length || closed.length) {
-    st.dayKey = today; if (!st.dayStart) st.dayStart = equity;
-    st.trades = st.trades.slice(0, 300);
-    await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
-  }
+  const newDay = st.dayKey !== today;
+  if (newDay) st.dayStart = equity;        // yeni gün: günlük drawdown referansını sıfırla
+  st.dayKey = today;
+  st.trades = st.trades.slice(0, 300);
+  await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
   if (closed.length) notify.push(`🤖 AI TRADER — ${closed.length} POZİSYON KAPANDI\n` + closed.join("\n"));
   if (opened.length) notify.push(`🤖 AI TRADER — ${opened.length} POZİSYON AÇILDI\n` + opened.join("\n"));
   return st;
@@ -172,22 +174,47 @@ async function main() {
   const signals = await scanAll();
   console.log(`Tarama bitti ${((Date.now() - t0) / 1e3).toFixed(1)}s · ${signals.length} sinyal (${signals.filter(s => s.signal === "AL").length} AL, ${signals.filter(s => s.signal === "SAT").length} SAT)`);
 
+  const xuNow = await fetchIndexClose("XU100").catch(() => null);  // endeks (XU100) anlık
+
   const notify = [];
   await notifyScan(signals, notify);          // HİSSE TARA AL/SAT
   let st = null;
   if (GIST_ID && GIST_TOKEN) {
-    st = await runPaper(signals, notify);      // AI TRADER aç/kapat (state Gist'te)
+    st = await runPaper(signals, notify, xuNow);   // AI TRADER aç/kapat (state Gist'te)
   } else {
     console.log("⚠ Gist yok — AI TRADER atlandı (state kalıcı olmadan paper trading her çalışmada sıfırlanır). GH_GIST_TOKEN + GIST_ID secret'larını ekle.");
+  }
+
+  // ---------- Portföy performans özeti (alım-satım, gün sonu, endeks-relatif) ----------
+  if (st) {
+    const priceOf = s => signals.find(x => x.sym === s)?.price || st.pos[s]?.last || st.pos[s]?.entry;
+    const eq = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * priceOf(s), 0);
+    const portRet = (eq - st.start) / st.start * 100;
+    const idxRet = (st.xuStart && xuNow) ? (xuNow - st.xuStart) / st.xuStart * 100 : null;
+    const rel = idxRet != null ? portRet - idxRet : null;
+    const today = new Date().toISOString().slice(0, 10);
+    const todayTrades = st.trades.filter(t => t.close === today);
+    const wins = todayTrades.filter(t => t.pnl > 0).length;
+    const openLines = Object.entries(st.pos).map(([s, p]) => {
+      const cur = priceOf(s), pr = ((cur - p.entry) / p.entry * 100).toFixed(1);
+      return `• ${s} ${p.lot} lot @ ${p.entry}₺ → ${cur}₺ (${pr >= 0 ? "+" : ""}${pr}%)`;
+    });
+    let perf = `📊 AI TRADER — PORTFÖY DURUMU\n${fmtTime()}\n`;
+    perf += `\n💼 Değer: ${Math.round(eq).toLocaleString("tr-TR")}₺ · Nakit: ${Math.round(st.cash).toLocaleString("tr-TR")}₺`;
+    perf += `\n📈 Toplam getiri: ${portRet >= 0 ? "+" : ""}${portRet.toFixed(2)}%`;
+    if (idxRet != null) {
+      perf += `\n🏛 XU100: ${idxRet >= 0 ? "+" : ""}${idxRet.toFixed(2)}%`;
+      perf += `\n⚖️ Endekse relatif: ${rel >= 0 ? "+" : ""}${rel.toFixed(2)}% ${rel >= 0 ? "✅ üstünde" : "🔻 altında"}`;
+    }
+    if (todayTrades.length) perf += `\n🔁 Bugün ${todayTrades.length} kapanış · ${wins} kârlı`;
+    perf += `\n\n📌 Açık pozisyonlar (${openLines.length}):\n` + (openLines.join("\n") || "yok");
+    await sendTG(perf); await sleep(400);
+    console.log(`Portföy: değer ~${Math.round(eq)}₺ · getiri ${portRet.toFixed(2)}% · endeks-relatif ${rel != null ? rel.toFixed(2) + "%" : "-"} · poz ${openLines.length}`);
   }
 
   // Telegram mesajlarını sırayla gönder
   for (const m of notify) { await sendTG(m); await sleep(400); }
 
-  if (st) {
-    const eq = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * ((signals.find(x => x.sym === s)?.price) || p.entry), 0);
-    console.log(`Portföy: nakit ${Math.round(st.cash)}₺ · pozisyon ${Object.keys(st.pos).length} · değer ~${Math.round(eq)}₺ · işlem ${st.trades.length}`);
-  }
-  console.log(`${notify.length} Telegram mesajı gönderildi. Toplam ${((Date.now() - t0) / 1e3).toFixed(1)}s`);
+  console.log(`${notify.length + (st ? 1 : 0)} Telegram mesajı gönderildi. Toplam ${((Date.now() - t0) / 1e3).toFixed(1)}s`);
 }
 main().catch(e => { console.error("FATAL:", e); process.exit(1); });

@@ -22,3 +22,8 @@ async function yfetch(sym, interval, range, timeout=8000){
 }
 export const fetch15m = sym => yfetch(sym,'15m','5d');
 export const fetchDaily = sym => yfetch(sym,'1d','1y');
+// Endeks (XU100 vb.) son kapanışı — portföyü endeksle kıyaslamak için
+export async function fetchIndexClose(sym='XU100'){
+  const rows = await yfetch(sym,'1d','5d');
+  return rows.length ? rows[rows.length-1].close : null;
+}
