@@ -23,6 +23,14 @@ const CONC = +(process.env.CONC || 8);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const fmtTime = () => new Date().toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" });
 const sectorOf = sym => Object.entries(SECTORS).find(([, ss]) => ss.includes(sym))?.[0];
+// BIST seansı: hafta içi 09:55–18:05 İstanbul. Dışındaysa YENİ pozisyon açılmaz.
+function isTradingHours() {
+  const p = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
+  const wd = p.find(x => x.type === "weekday").value;            // Mon..Sun
+  if (wd === "Sat" || wd === "Sun") return false;
+  const mins = (+p.find(x => x.type === "hour").value) * 60 + (+p.find(x => x.type === "minute").value);
+  return mins >= 595 && mins <= 1085;                            // 09:55 .. 18:05
+}
 
 // ---------- Telegram ----------
 async function sendTG(text) {
@@ -141,7 +149,9 @@ async function runPaper(signals, xuNow) {
   const upside = s => (s.target1 && s.price) ? (s.target1 - s.price) / s.price * 100 : 0;
   const equity = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * ((scanMap[s]?.price) || p.entry), 0);
   const ddOK = !st.dayStart || (equity - st.dayStart) / st.dayStart > -0.03;
-  const candidates = signals.filter(s => s.signal === "AL" && !st.pos[s.sym])
+  const trading = isTradingHours();   // sadece seans içinde (09:55–18:05 hafta içi) poz aç
+  if (!trading && signals.some(s => s.signal === "AL")) console.log("⏰ Piyasa dışı — yeni pozisyon açılmadı.");
+  const candidates = !trading ? [] : signals.filter(s => s.signal === "AL" && !st.pos[s.sym])
     .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 }))   // güç + potansiyel
     .sort((a, b) => b._score - a._score);
   for (const sig of candidates) {
