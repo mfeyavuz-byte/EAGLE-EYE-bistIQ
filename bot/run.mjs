@@ -9,6 +9,7 @@ import { fetch15m, fetchDaily, fetchIndexClose } from "./data.mjs";
 import { fetchNews } from "./news.mjs";
 import syms from "./symbols.json" with { type: "json" };
 import SECTORS from "./sectors.json" with { type: "json" };
+import { analyzeNewsImpact } from "./news-impact.mjs";
 
 const TG_TOKEN = process.env.TG_TOKEN || "";
 const TG_CHAT  = process.env.TG_CHAT  || "";
@@ -106,12 +107,25 @@ async function runPaper(signals, xuNow) {
     ps.last = cur;   // güncel fiyatı pozisyona yaz (performans/valuation için)
     const pct = (cur - ps.entry) / ps.entry;
     if (pct >= 0.02) { const np = Math.max(ps.peak || 0, cur); if (np > (ps.peak || 0)) ps.peak = np; }
+    // BREAKEVEN: +%2'de stop'u girişe çek (kârı koru, başabaşa kilitle)
+    if (pct >= 0.02 && (!ps.sl || ps.sl < ps.entry)) ps.sl = ps.entry;
     const trailLv = ps.peak ? +(ps.peak * 0.985).toFixed(2) : null;
-    const hitSL = ps.sl && cur <= ps.sl, hitTP = ps.tp && cur >= ps.tp, hitTS = !!trailLv && cur <= trailLv;
-    const hitSIG = satSet.has(sym);
-    if (hitSL || hitTP || hitTS || hitSIG) {
-      const reason = hitSL ? "SL" : hitTS ? "TS" : hitTP ? "TP" : "SIG";
-      const label = { SL: "Zarar Durdur", TS: "Trailing Stop", TP: "Hedef", SIG: "SAT sinyali" }[reason];
+    // KISMİ KÂR: ilk hedefe ulaşınca yarısını sat (bir kez), kalanı trailing'e bırak
+    if (!ps.partial && ps.tp && cur >= ps.tp && ps.lot >= 2) {
+      const half = Math.floor(ps.lot / 2);
+      const pnl = +((cur - ps.entry) * half).toFixed(0), pnlPct = +(pct * 100).toFixed(2);
+      st.cash += half * cur;
+      st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: half, pnl, pnlPct, open: ps.date, close: today, reason: "TP-yarı" });
+      ps.lot -= half; ps.partial = true; ps.tp = +(cur * 1.05).toFixed(2);   // kalan için hedefi yukarı taşı
+      closed.push(`💰 ${sym} YARI KÂR @ ${cur}₺ · +%${pnlPct} (${pnl >= 0 ? "+" : ""}${pnl}₺) · kalan ${ps.lot} lot trailing'de`);
+      continue;
+    }
+    // TAM KAPAMA: stop(breakeven dahil) / trailing / SAT sinyali / (kısmi yapılmadıysa hedef)
+    const hitSL = ps.sl && cur <= ps.sl, hitTS = !!trailLv && cur <= trailLv, hitSIG = satSet.has(sym);
+    const hitTP = !ps.partial && ps.tp && cur >= ps.tp;
+    if (hitSL || hitTS || hitSIG || hitTP) {
+      const reason = hitSL ? (ps.sl === ps.entry ? "BE" : "SL") : hitTS ? "TS" : hitSIG ? "SIG" : "TP";
+      const label = { SL: "Zarar Durdur", BE: "Başabaş (kâr korundu)", TS: "Trailing Stop", SIG: "SAT sinyali", TP: "Hedef" }[reason];
       const pnl = +((cur - ps.entry) * ps.lot).toFixed(0), pnlPct = +(pct * 100).toFixed(2);
       st.cash += ps.lot * cur;
       st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: ps.lot, pnl, pnlPct, open: ps.date, close: today, reason });
@@ -153,6 +167,44 @@ async function runPaper(signals, xuNow) {
   return st;
 }
 
+// ---------- Telegram komutları (/durum /pozisyonlar) ----------
+function buildStatus(st) {
+  const priceOf = p => p.last || p.entry;
+  const eq = st.cash + Object.entries(st.pos).reduce((a, [, p]) => a + p.lot * priceOf(p), 0);
+  const portRet = (eq - st.start) / st.start * 100;
+  const lines = Object.entries(st.pos).map(([s, p]) => {
+    const cur = priceOf(p), pr = (cur - p.entry) / p.entry * 100;
+    return `• ${s} ${p.lot} lot · ${p.entry}₺→${cur}₺ · K/Z ${pr >= 0 ? "+" : ""}${pr.toFixed(1)}%`;
+  });
+  let m = `📊 AI TRADER — DURUM (anlık)\n${fmtTime()}\n`;
+  m += `\n💼 Değer: ${Math.round(eq).toLocaleString("tr-TR")}₺ · Nakit: ${Math.round(st.cash).toLocaleString("tr-TR")}₺`;
+  m += `\n📈 Toplam getiri: ${portRet >= 0 ? "+" : ""}${portRet.toFixed(2)}%`;
+  m += `\n\n📌 Açık pozisyonlar (${lines.length}/5):\n` + (lines.join("\n") || "yok");
+  return m;
+}
+async function handleCommands(st) {
+  if (!TG_TOKEN || !TG_CHAT || !st) return;
+  let updates = [];
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getUpdates?offset=${st.tgOffset || 0}&timeout=0`);
+    const j = await r.json();
+    updates = j.result || [];
+  } catch { return; }
+  if (!updates.length) return;
+  let off = st.tgOffset || 0, replied = 0;
+  for (const u of updates) {
+    off = u.update_id + 1;
+    const txt = (u.message?.text || "").trim().toLowerCase().split("@")[0];
+    if (String(u.message?.chat?.id) !== String(TG_CHAT)) continue;
+    if (txt === "/durum" || txt === "/pozisyonlar" || txt === "/start") {
+      await sendTG(buildStatus(st)); replied++; await sleep(300);
+    }
+  }
+  st.tgOffset = off;
+  await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
+  if (replied) console.log(`${replied} Telegram komutu yanıtlandı.`);
+}
+
 // ---------- Ana ----------
 async function main() {
   const t0 = Date.now();
@@ -162,15 +214,38 @@ async function main() {
 
   const xuNow = await fetchIndexClose("XU100").catch(() => null);  // endeks (XU100) anlık
 
-  // Haberleri çek ve Gist'e yaz (app proxy başarısız olursa oradan okur)
-  if (GIST_ID && GIST_TOKEN) {
+  // ---------- HABER-DUYARLI SİNYAL: haberin etkisine göre güveni ayarla ----------
+  let news = [];
+  try { news = await fetchNews(); } catch (e) { console.error("Haber çekme:", e.message); }
+  const newsScores = {};   // sembol -> toplam haber etki skoru
+  for (const it of news) {
     try {
-      const news = await fetchNews();
-      if (news.length) {
-        await gistPut({ "eagle_news.json": { content: JSON.stringify({ ts: Date.now(), items: news }) } });
-        console.log(`Haber: ${news.length} başlık Gist'e yazıldı`);
-      }
-    } catch (e) { console.error("Haber hatası:", e.message); }
+      const r = analyzeNewsImpact(it.title || "", it.desc || "");
+      for (const [sym, sc] of (r.affected || [])) newsScores[sym] = (newsScores[sym] || 0) + sc;
+    } catch {}
+  }
+  let adjusted = 0;
+  for (const s of signals) {
+    const ns = newsScores[s.sym] || 0;
+    if (!ns) continue;
+    const adj = Math.max(-15, Math.min(15, Math.round(ns * 8)));   // ±15 puan tavan
+    // Pozitif haber AL'a +, SAT'a − (haber satışı çürütür); negatif tersi
+    s.confidence = Math.max(0, Math.min(99, s.confidence + (s.signal === "AL" ? adj : -adj)));
+    s.news = (ns > 0 ? "📰+" : "📰") + ns.toFixed(1);
+    adjusted++;
+  }
+  if (adjusted) {
+    // haber ayarından sonra güce göre yeniden sırala
+    signals.sort((a, b) => a.signal !== b.signal ? (a.signal === "AL" ? -1 : 1) : b.confidence - a.confidence);
+    console.log(`Haber-duyarlı: ${adjusted} sinyal ayarlandı (${news.length} başlık)`);
+  }
+
+  // Haberleri Gist'e yaz (app proxy başarısız olursa oradan okur)
+  if (GIST_ID && GIST_TOKEN && news.length) {
+    try {
+      await gistPut({ "eagle_news.json": { content: JSON.stringify({ ts: Date.now(), items: news }) } });
+      console.log(`Haber: ${news.length} başlık Gist'e yazıldı`);
+    } catch (e) { console.error("Haber Gist:", e.message); }
   }
 
   // Her run: tara + pozisyon yönet (sessiz, state'e biriktir). Mesaj saat başı gider.
@@ -181,6 +256,9 @@ async function main() {
     console.log("⚠ Gist yok — AI TRADER atlandı (state kalıcı olmadan paper trading her çalışmada sıfırlanır). GH_GIST_TOKEN + GIST_ID secret'larını ekle.");
   }
 
+  // Telegram komutlarına cevap ver (/durum, /pozisyonlar) — her run
+  if (st) await handleCommands(st);
+
   // ---------- SAAT BAŞI RAPOR (her saat 1 kez; tarama 20+ kez/gün ama mesaj saatlik) ----------
   const istHour = +new Date().toLocaleString("en-US", { timeZone: "Europe/Istanbul", hour: "2-digit", hour12: false });
   const manual = process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
@@ -190,8 +268,9 @@ async function main() {
   if (doReport) {
     // 1) HİSSE TARA — güncel en güçlü AL/SAT
     const al = signals.filter(s => s.signal === "AL").slice(0, 15), sa = signals.filter(s => s.signal === "SAT").slice(0, 15);
-    const f = s => `${s.sym} %${s.confidence} @${s.price}₺ · stop ${s.stopLoss} · hedef ${s.target1}`;
+    const f = s => `${s.sym} %${s.confidence} @${s.price}₺ · stop ${s.stopLoss} · hedef ${s.target1}${s.news ? " · " + s.news : ""}`;
     let m1 = "🦅 EAGLE EYE — HİSSE TARA (motor)\n" + fmtTime();
+    if (!signals.length) m1 += "\n\n⚠ Tarama 0 sinyal döndü — Yahoo/veri kaynağı geçici sorun olabilir.";
     if (al.length) m1 += `\n\n📈 EN GÜÇLÜ AL (${al.length}):\n` + al.map(f).join("\n");
     if (sa.length) m1 += `\n\n📉 SAT (${sa.length}):\n` + sa.map(f).join("\n");
     m1 += "\n\n⚠ Yatırım tavsiyesi değildir · ~15dk gecikmeli olabilir.";
@@ -232,4 +311,8 @@ async function main() {
 
   console.log(`${sent} Telegram mesajı gönderildi. Toplam ${((Date.now() - t0) / 1e3).toFixed(1)}s`);
 }
-main().catch(e => { console.error("FATAL:", e); process.exit(1); });
+main().catch(async e => {
+  console.error("FATAL:", e);
+  try { await sendTG("⚠ EAGLE EYE bot HATASI: " + (e?.message || e)); } catch {}
+  process.exit(1);
+});

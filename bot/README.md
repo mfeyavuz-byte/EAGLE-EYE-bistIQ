@@ -46,3 +46,27 @@ TG_TOKEN=xxx TG_CHAT=yyy GH_GIST_TOKEN=zzz GIST_ID=www node bot/run.mjs
 ```
 
 > ⚠ Yatırım tavsiyesi değildir. Veriler ~15dk gecikmeli olabilir. Sanal portföy gerçek para değildir.
+
+---
+
+## 🆕 Yeni özellikler (motor botu v2)
+
+- **Haber-duyarlı sinyaller**: RSS haberlerinin hisse/sektör etkisi ölçülür (`news-impact.mjs`); pozitif haber AL güvenini artırır, negatif azaltır (±15 puan). Mesajda `📰+` / `📰-` etiketi.
+- **Akıllı çıkış**: +%2'de stop girişe çekilir (**breakeven** — kâr garanti); ilk hedefte **yarısı satılır**, kalan trailing'e bırakılır.
+- **Sizing**: güvene göre %10–%30, en fazla 5 pozisyon, en güçlü + en yüksek potansiyelli AL'lar seçilir.
+- **Telegram komutları**: bota `/durum` veya `/pozisyonlar` yaz → anlık portföy + açık pozisyonlar + K/Z cevabı (her run getUpdates ile, ~20dk içinde).
+- **Sağlık alarmı**: tarama 0 sinyal verirse rapora uyarı; bot çökerse Telegram'a "⚠ HATA".
+
+## ⏱ Çalışma garantisi (dış cron — opsiyonel ama önerilir)
+GitHub'ın kendi cron'u tetikleri atlayabilir. Self-loop bunu büyük ölçüde çözer ama %100 garanti için ücretsiz **cron-job.org**:
+1. github.com → Settings → Developer settings → **Fine-grained token** → repo `EAGLE-EYE-bistIQ` → **Actions: Read and write** izni → oluştur.
+2. **cron-job.org** (ücretsiz üyelik) → Create cronjob:
+   - URL: `https://api.github.com/repos/mfeyavuz-byte/EAGLE-EYE-bistIQ/actions/workflows/trade.yml/dispatches`
+   - Method: **POST**
+   - Headers: `Authorization: Bearer <token>` · `Accept: application/vnd.github+json`
+   - Body: `{"ref":"main"}`
+   - Schedule: hafta içi 10:00 İstanbul (loop gerisini halleder)
+3. Bu, GitHub'a güvenmeden botu garanti başlatır.
+
+## Başlangıç sermayesi
+Varsayılan **500.000₺**. Değiştirmek için workflow env'e `START_CASH: "1000000"` ekle. Sıfırlamak için Gist'teki `feybot_paper.json`'u `{}` yap.
