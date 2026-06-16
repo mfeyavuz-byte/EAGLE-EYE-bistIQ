@@ -17,6 +17,8 @@ const GIST_TOKEN = process.env.GH_GIST_TOKEN || "";
 const GIST_ID    = process.env.GIST_ID || "";
 const PAPER_FILE = "feybot_paper.json";
 const START = +(process.env.START_CASH || 500000);   // başlangıç sermayesi (varsayılan 500.000₺)
+const MIN_CONF = +(process.env.MIN_CONF || 65);       // sinyal kalite barı (güven); 50→65
+const MIN_ADX = +(process.env.MIN_ADX || 20);         // trend gücü barı (ADX); trendsiz=gürültü
 const SENT_FILE  = "eagle_sent.json";
 const CONC = +(process.env.CONC || 8);
 
@@ -77,9 +79,15 @@ async function scanOne(sym) {
   if (s.slice(-5).reduce((a, b) => a + (b.volume || 0), 0) / 5 * (d?.close || 0) < 1e5) return null;
   const y = await fetchDaily(sym);
   const k = getSignals(enrichData(s), getHigherTrend(y), y);
-  if (!k || k.final === "NÖTR" || k.confidence < 50) return null;
+  if (!k || k.final === "NÖTR") return null;
+  // KALİTE FİLTRESİ — daha isabetli, daha az gürültü:
+  if (k.confidence < MIN_CONF) return null;                          // zayıf sinyalleri ele (varsayılan 65)
+  if ((k.adx || 0) < MIN_ADX) return null;                           // trendsiz/choppy = gürültü (ADX<20)
+  if ((k.htfNote || "").includes("⚠")) return null;                  // üst zaman dilimi çelişkili
+  if (k.final === "AL" && k.higherTrend === "ASAGI") return null;    // düşen günlük trende karşı ALMA
+  if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;  // yükselen trende karşı SATMA
   return { sym, signal: k.final, confidence: k.confidence, price: d.close,
-           stopLoss: k.stopLoss, target1: k.target1, mod: k.mod };
+           stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend };
 }
 async function scanAll() {
   const out = [];
