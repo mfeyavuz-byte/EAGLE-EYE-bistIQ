@@ -107,6 +107,14 @@ async function runPaper(signals, xuNow) {
   const scanMap = Object.fromEntries(signals.map(s => [s.sym, s]));
   const satSet = new Set(signals.filter(s => s.signal === "SAT").map(s => s.sym));
   const opened = [], closed = [];
+  const equity = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * ((scanMap[s]?.price) || p.entry), 0);
+
+  // Pozisyon yönetiminin TAMAMI (alım + satım) sadece BIST seansında: hafta içi 09:55–18:05.
+  // Açılış (09:55) dahil → gece verilen kararlar sabah açılışta uygulanır.
+  const trading = isTradingHours();
+  if (!trading) {
+    console.log("⏰ Piyasa dışı — pozisyon yönetimi yok (ne alım ne satım).");
+  } else {
 
   // --- KAPAMA: TP/SL/trailing + SAT sinyali ---
   for (const [sym, ps] of Object.entries({ ...st.pos })) {
@@ -147,11 +155,8 @@ async function runPaper(signals, xuNow) {
   const MAX_POS = 5;
   const sizePct = c => c >= 85 ? 0.30 : c >= 70 ? 0.20 : 0.10;   // %10–%30
   const upside = s => (s.target1 && s.price) ? (s.target1 - s.price) / s.price * 100 : 0;
-  const equity = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * ((scanMap[s]?.price) || p.entry), 0);
   const ddOK = !st.dayStart || (equity - st.dayStart) / st.dayStart > -0.03;
-  const trading = isTradingHours();   // sadece seans içinde (09:55–18:05 hafta içi) poz aç
-  if (!trading && signals.some(s => s.signal === "AL")) console.log("⏰ Piyasa dışı — yeni pozisyon açılmadı.");
-  const candidates = !trading ? [] : signals.filter(s => s.signal === "AL" && !st.pos[s.sym])
+  const candidates = signals.filter(s => s.signal === "AL" && !st.pos[s.sym])
     .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 }))   // güç + potansiyel
     .sort((a, b) => b._score - a._score);
   for (const sig of candidates) {
@@ -165,6 +170,7 @@ async function runPaper(signals, xuNow) {
       opened.push(`📈 ${sig.sym} · ${Q} lot @ ${j}₺ (%${Math.round(sizePct(conf) * 100)} portföy) · güven %${conf} · potansiyel %${up.toFixed(1)} · stop ${sl} · hedef ${tp}`);
     }
   }
+  } // seans (trading) bloğu sonu
 
   const newDay = st.dayKey !== today;
   if (newDay) st.dayStart = equity;        // yeni gün: günlük drawdown referansını sıfırla
