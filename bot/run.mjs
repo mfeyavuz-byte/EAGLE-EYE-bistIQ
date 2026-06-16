@@ -15,6 +15,7 @@ const TG_CHAT  = process.env.TG_CHAT  || "";
 const GIST_TOKEN = process.env.GH_GIST_TOKEN || "";
 const GIST_ID    = process.env.GIST_ID || "";
 const PAPER_FILE = "feybot_paper.json";
+const START = +(process.env.START_CASH || 500000);   // başlangıç sermayesi (varsayılan 500.000₺)
 const SENT_FILE  = "eagle_sent.json";
 const CONC = +(process.env.CONC || 8);
 
@@ -91,7 +92,7 @@ async function currentPrice(sym, scanMap) {
 async function runPaper(signals, xuNow) {
   const today = new Date().toISOString().slice(0, 10);
   let st = await gistGet(PAPER_FILE, null);
-  if (!st || typeof st.cash !== "number") st = { cash: 1e5, start: 1e5, pos: {}, trades: [], dayKey: today, dayStart: 1e5, startDate: today, xuStart: xuNow || null };
+  if (!st || typeof st.cash !== "number") st = { cash: START, start: START, pos: {}, trades: [], dayKey: today, dayStart: START, startDate: today, xuStart: xuNow || null };
   st.pos = st.pos || {}; st.trades = st.trades || [];
   if (!st.xuStart && xuNow) st.xuStart = xuNow;   // endeks başlangıcı (relatif getiri için)
   const scanMap = Object.fromEntries(signals.map(s => [s.sym, s]));
