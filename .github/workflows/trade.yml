@@ -2,13 +2,9 @@ name: EAGLE EYE — Otonom Motor Botu
 
 on:
   schedule:
-    # BIST saatleri (UTC). İstanbul = UTC+3. Hafta içi.
-    # 10:00 / 12:00 / 14:00 / 16:00 / 18:00 İstanbul = pozisyon yönetimi + sinyal taraması
-    - cron: "0 7 * * 1-5"
-    - cron: "0 9 * * 1-5"
-    - cron: "0 11 * * 1-5"
-    - cron: "0 13 * * 1-5"
-    - cron: "0 15 * * 1-5"
+    # Her 20 dakikada bir, 07:00–15:59 UTC = 10:00–18:59 İstanbul, hafta içi.
+    # = ~27 tarama/gün (≥20). Pozisyon yönetimi her run; Telegram raporu saat başı.
+    - cron: "*/20 7-15 * * 1-5"
   workflow_dispatch: # elle tetik (Actions sekmesi)
 
 jobs:

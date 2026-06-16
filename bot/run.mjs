@@ -88,7 +88,7 @@ async function currentPrice(sym, scanMap) {
   return s.length ? s[s.length - 1].close : null;
 }
 
-async function runPaper(signals, notify, xuNow) {
+async function runPaper(signals, xuNow) {
   const today = new Date().toISOString().slice(0, 10);
   let st = await gistGet(PAPER_FILE, null);
   if (!st || typeof st.cash !== "number") st = { cash: 1e5, start: 1e5, pos: {}, trades: [], dayKey: today, dayStart: 1e5, startDate: today, xuStart: xuNow || null };
@@ -119,23 +119,25 @@ async function runPaper(signals, notify, xuNow) {
     }
   }
 
-  // --- AÇMA: AL sinyalleri ---
-  // Kural: pozisyon başına TOPLAM portföyün %10'u, toplam EN FAZLA 5 farklı hisse.
-  const MAX_POS = 5, POS_PCT = 0.10;
+  // --- AÇMA: en güçlü + en yüksek potansiyelli AL sinyalleri ---
+  // Sizing: güvene göre %10-%30. Seçim: güven + hedefe yükseliş potansiyeli (en iyi önce).
+  const MAX_POS = 5;
+  const sizePct = c => c >= 85 ? 0.30 : c >= 70 ? 0.20 : 0.10;   // %10–%30
+  const upside = s => (s.target1 && s.price) ? (s.target1 - s.price) / s.price * 100 : 0;
   const equity = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * ((scanMap[s]?.price) || p.entry), 0);
   const ddOK = !st.dayStart || (equity - st.dayStart) / st.dayStart > -0.03;
-  for (const sig of signals.filter(s => s.signal === "AL")) {
-    if (Object.keys(st.pos).length >= MAX_POS) break;   // en fazla 5 pozisyon
-    const sym = sig.sym;
-    if (st.pos[sym] || !ddOK) continue;
-    const conf = sig.confidence || 0;
-    const j = sig.price;
-    const Q = Math.floor(equity * POS_PCT / j);          // toplam portföyün %10'u
+  const candidates = signals.filter(s => s.signal === "AL" && !st.pos[s.sym])
+    .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 }))   // güç + potansiyel
+    .sort((a, b) => b._score - a._score);
+  for (const sig of candidates) {
+    if (Object.keys(st.pos).length >= MAX_POS || !ddOK) break;
+    const conf = sig.confidence || 0, j = sig.price, up = upside(sig);
+    const Q = Math.floor(equity * sizePct(conf) / j);              // portföyün %10–%30'u
     if (Q > 0 && Q * j <= st.cash) {
       st.cash -= Q * j;
       const sl = sig.stopLoss || +(j * 0.99).toFixed(2), tp = sig.target1 || +(j * 1.04).toFixed(2);
-      st.pos[sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0 };
-      opened.push(`📈 ${sym} · ${Q} lot @ ${j}₺ · güven %${conf} · stop ${sl} · hedef ${tp}`);
+      st.pos[sig.sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0 };
+      opened.push(`📈 ${sig.sym} · ${Q} lot @ ${j}₺ (%${Math.round(sizePct(conf) * 100)} portföy) · güven %${conf} · potansiyel %${up.toFixed(1)} · stop ${sl} · hedef ${tp}`);
     }
   }
 
@@ -143,29 +145,11 @@ async function runPaper(signals, notify, xuNow) {
   if (newDay) st.dayStart = equity;        // yeni gün: günlük drawdown referansını sıfırla
   st.dayKey = today;
   st.trades = st.trades.slice(0, 300);
+  // Aç/kapat'ları saatlik rapora kadar biriktir (her run anlık mesaj atmaz, saat başı rapor eder)
+  st.hourOpens = (st.hourOpens || []).concat(opened);
+  st.hourCloses = (st.hourCloses || []).concat(closed);
   await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
-  if (closed.length) notify.push(`🤖 AI TRADER — ${closed.length} POZİSYON KAPANDI\n` + closed.join("\n"));
-  if (opened.length) notify.push(`🤖 AI TRADER — ${opened.length} POZİSYON AÇILDI\n` + opened.join("\n"));
   return st;
-}
-
-// ---------- HİSSE TARA AL/SAT bildirimi (dedup) ----------
-async function notifyScan(signals, notify) {
-  const today = new Date().toISOString().slice(0, 10);
-  const sent = await gistGet(SENT_FILE, {});
-  const k = sent.d === today ? sent.k || {} : {};
-  const fresh = signals.filter(s => !k[s.signal + s.sym]);
-  if (!fresh.length) { console.log("Yeni sinyal yok (dedup)."); return false; }
-  fresh.forEach(s => k[s.signal + s.sym] = 1);
-  await gistPut({ [SENT_FILE]: { content: JSON.stringify({ d: today, k }) } });
-  const al = fresh.filter(s => s.signal === "AL"), sa = fresh.filter(s => s.signal === "SAT");
-  const f = s => `${s.sym} %${s.confidence} @${s.price}₺ · stop ${s.stopLoss} · hedef ${s.target1}`;
-  let m = "🦅 EAGLE EYE — HİSSE TARA (motor)\n" + fmtTime();
-  if (al.length) m += `\n\n📈 AL (${al.length}):\n` + al.slice(0, 20).map(f).join("\n");
-  if (sa.length) m += `\n\n📉 SAT (${sa.length}):\n` + sa.slice(0, 20).map(f).join("\n");
-  m += "\n\n⚠ Yatırım tavsiyesi değildir · ~15dk gecikmeli olabilir.";
-  notify.push(m);
-  return true;
 }
 
 // ---------- Ana ----------
@@ -188,45 +172,63 @@ async function main() {
     } catch (e) { console.error("Haber hatası:", e.message); }
   }
 
-  const notify = [];
-  await notifyScan(signals, notify);          // HİSSE TARA AL/SAT
+  // Her run: tara + pozisyon yönet (sessiz, state'e biriktir). Mesaj saat başı gider.
   let st = null;
   if (GIST_ID && GIST_TOKEN) {
-    st = await runPaper(signals, notify, xuNow);   // AI TRADER aç/kapat (state Gist'te)
+    st = await runPaper(signals, xuNow);
   } else {
     console.log("⚠ Gist yok — AI TRADER atlandı (state kalıcı olmadan paper trading her çalışmada sıfırlanır). GH_GIST_TOKEN + GIST_ID secret'larını ekle.");
   }
 
-  // ---------- Portföy performans özeti (alım-satım, gün sonu, endeks-relatif) ----------
-  if (st) {
-    const priceOf = s => signals.find(x => x.sym === s)?.price || st.pos[s]?.last || st.pos[s]?.entry;
-    const eq = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * priceOf(s), 0);
-    const portRet = (eq - st.start) / st.start * 100;
-    const idxRet = (st.xuStart && xuNow) ? (xuNow - st.xuStart) / st.xuStart * 100 : null;
-    const rel = idxRet != null ? portRet - idxRet : null;
-    const today = new Date().toISOString().slice(0, 10);
-    const todayTrades = st.trades.filter(t => t.close === today);
-    const wins = todayTrades.filter(t => t.pnl > 0).length;
-    const openLines = Object.entries(st.pos).map(([s, p]) => {
-      const cur = priceOf(s), pr = ((cur - p.entry) / p.entry * 100).toFixed(1);
-      return `• ${s} ${p.lot} lot @ ${p.entry}₺ → ${cur}₺ (${pr >= 0 ? "+" : ""}${pr}%)`;
-    });
-    let perf = `📊 AI TRADER — PORTFÖY DURUMU\n${fmtTime()}\n`;
-    perf += `\n💼 Değer: ${Math.round(eq).toLocaleString("tr-TR")}₺ · Nakit: ${Math.round(st.cash).toLocaleString("tr-TR")}₺`;
-    perf += `\n📈 Toplam getiri: ${portRet >= 0 ? "+" : ""}${portRet.toFixed(2)}%`;
-    if (idxRet != null) {
-      perf += `\n🏛 XU100: ${idxRet >= 0 ? "+" : ""}${idxRet.toFixed(2)}%`;
-      perf += `\n⚖️ Endekse relatif: ${rel >= 0 ? "+" : ""}${rel.toFixed(2)}% ${rel >= 0 ? "✅ üstünde" : "🔻 altında"}`;
+  // ---------- SAAT BAŞI RAPOR (her saat 1 kez; tarama 20+ kez/gün ama mesaj saatlik) ----------
+  const istHour = +new Date().toLocaleString("en-US", { timeZone: "Europe/Istanbul", hour: "2-digit", hour12: false });
+  const manual = process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
+  const doReport = !st || manual || st.lastReportHour !== istHour;
+  let sent = 0;
+
+  if (doReport) {
+    // 1) HİSSE TARA — güncel en güçlü AL/SAT
+    const al = signals.filter(s => s.signal === "AL").slice(0, 15), sa = signals.filter(s => s.signal === "SAT").slice(0, 15);
+    const f = s => `${s.sym} %${s.confidence} @${s.price}₺ · stop ${s.stopLoss} · hedef ${s.target1}`;
+    let m1 = "🦅 EAGLE EYE — HİSSE TARA (motor)\n" + fmtTime();
+    if (al.length) m1 += `\n\n📈 EN GÜÇLÜ AL (${al.length}):\n` + al.map(f).join("\n");
+    if (sa.length) m1 += `\n\n📉 SAT (${sa.length}):\n` + sa.map(f).join("\n");
+    m1 += "\n\n⚠ Yatırım tavsiyesi değildir · ~15dk gecikmeli olabilir.";
+    await sendTG(m1); sent++; await sleep(400);
+
+    // 2) AI TRADER durumu (saatlik): yeni pozisyon?, açık pozisyonlar + açılıştan beri K/Z
+    if (st) {
+      const priceOf = s => signals.find(x => x.sym === s)?.price || st.pos[s]?.last || st.pos[s]?.entry;
+      const eq = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * priceOf(s), 0);
+      const portRet = (eq - st.start) / st.start * 100;
+      const idxRet = (st.xuStart && xuNow) ? (xuNow - st.xuStart) / st.xuStart * 100 : null;
+      const rel = idxRet != null ? portRet - idxRet : null;
+      const openLines = Object.entries(st.pos).map(([s, p]) => {
+        const cur = priceOf(s), pr = (cur - p.entry) / p.entry * 100;
+        return `• ${s} ${p.lot} lot · giriş ${p.entry}₺ → ${cur}₺ · K/Z ${pr >= 0 ? "+" : ""}${pr.toFixed(1)}%`;
+      });
+      const ho = st.hourOpens || [], hc = st.hourCloses || [];
+      let m2 = `📊 AI TRADER — DURUM\n${fmtTime()}\n`;
+      m2 += `\n🆕 Bu saat: ${ho.length ? ho.length + " yeni pozisyon açıldı" : "yeni pozisyon açılmadı"}`;
+      if (ho.length) m2 += "\n" + ho.join("\n");
+      if (hc.length) m2 += `\n\n✅ Bu saat ${hc.length} kapanış:\n` + hc.join("\n");
+      m2 += `\n\n📌 Açık pozisyonlar (${openLines.length}/5) — açılıştan beri K/Z:\n` + (openLines.join("\n") || "yok");
+      m2 += `\n\n💼 Değer: ${Math.round(eq).toLocaleString("tr-TR")}₺ · Nakit: ${Math.round(st.cash).toLocaleString("tr-TR")}₺`;
+      m2 += `\n📈 Toplam getiri: ${portRet >= 0 ? "+" : ""}${portRet.toFixed(2)}%`;
+      if (idxRet != null) {
+        m2 += `\n🏛 XU100: ${idxRet >= 0 ? "+" : ""}${idxRet.toFixed(2)}%`;
+        m2 += `\n⚖️ Endekse relatif: ${rel >= 0 ? "+" : ""}${rel.toFixed(2)}% ${rel >= 0 ? "✅ üstünde" : "🔻 altında"}`;
+      }
+      await sendTG(m2); sent++; await sleep(400);
+      // raporu kaydet: bu saati işaretle, saatlik birikimi sıfırla
+      st.lastReportHour = istHour; st.hourOpens = []; st.hourCloses = [];
+      await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
+      console.log(`Rapor gönderildi · değer ~${Math.round(eq)}₺ · getiri ${portRet.toFixed(2)}% · poz ${openLines.length}`);
     }
-    if (todayTrades.length) perf += `\n🔁 Bugün ${todayTrades.length} kapanış · ${wins} kârlı`;
-    perf += `\n\n📌 Açık pozisyonlar (${openLines.length}):\n` + (openLines.join("\n") || "yok");
-    await sendTG(perf); await sleep(400);
-    console.log(`Portföy: değer ~${Math.round(eq)}₺ · getiri ${portRet.toFixed(2)}% · endeks-relatif ${rel != null ? rel.toFixed(2) + "%" : "-"} · poz ${openLines.length}`);
+  } else {
+    console.log(`Saat ${istHour} raporu zaten gönderildi — sessiz tarama/yönetim. Birikim: ${(st.hourOpens || []).length} açılış, ${(st.hourCloses || []).length} kapanış.`);
   }
 
-  // Telegram mesajlarını sırayla gönder
-  for (const m of notify) { await sendTG(m); await sleep(400); }
-
-  console.log(`${notify.length + (st ? 1 : 0)} Telegram mesajı gönderildi. Toplam ${((Date.now() - t0) / 1e3).toFixed(1)}s`);
+  console.log(`${sent} Telegram mesajı gönderildi. Toplam ${((Date.now() - t0) / 1e3).toFixed(1)}s`);
 }
 main().catch(e => { console.error("FATAL:", e); process.exit(1); });
