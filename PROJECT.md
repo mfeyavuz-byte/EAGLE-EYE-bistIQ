@@ -863,3 +863,26 @@ standalone/  7 dosya · 300 KB total
 - **Footer "FeyBot" → "EAGLE EYE: bistIQ"**: topbar değişmiş ama footer'da ayrı marka span'i ("Fey"+"Bot") kalmıştı — kullanıcının gördüğü buydu, düzeltildi.
 - **SİNYAL nav butonu kaldırıldı** (2 yer). Sayfa kodu `t==="signals"` KORUNDU — geri eklemek için: nav grubuna `React.createElement(NavBtn,{id:"signals",page:t,setPage:i,icon:"📶",label:"SİNYAL",badge:_e.length})` ekle.
 - 7 sekme: BIST·KART·HABER·FAVORİ·TARA·PORTFÖY·SİM. SW feysbot-v105.
+
+---
+
+## EAGLE EYE Bot Motoru — v3 (2026-06-17)
+
+**Mimari:** App (GitHub Pages PWA) + otonom bulut botu (GitHub Actions, `bot/`). İkisi aynı sinyal motorunu kullanır.
+
+**Sinyal motoru (`bot/engine.mjs` = app `getSignals`):**
+- **Timeframe: GÜNLÜK mum** (2y veri → MA50/MA200/ADX geçerli). Eskiden 15dk idi: MA200 hep null → düşen hisseye AL veriyordu (kök bug, düzeltildi).
+- 10 indikatör ağırlıklı toplanır (MA/MACD/RSI/BB/SRSI/VOL/ADX/Supertrend/PriceAction/MOM).
+- **Momentum confluence:** RSI+MACD+MOM hemfikirse net puan ×1.18, çelişirse ×0.72.
+- **Dip dönüş:** MA200 altında 3/7 dip şartı (RSI dip+dönüş, MACD dönüş, BB dip, hacim, stoch, OBV, supertrend flip). Dipler karşı-trend cezasından ve kalite filtrelerinden muaf.
+- Karar: MA200 üstü → güven 48+ge×1.3 (≤95); dip → 40+skor×9; MA200 altı momentum → ≤62 (gürültü, filtrelenir).
+
+**Tarama kalite filtresi (`run.mjs`, env: MIN_CONF=65, MIN_ADX=20):** güven<65 / ADX<20 / üst-trend çelişkisi / karşı-trend AL elenir (dipler muaf). Haber-duyarlı: ±15 güven (`news-impact.mjs`).
+
+**AI TRADER (paper, `feybot_paper.json` Gist):** başlangıç 500k (env START_CASH; başlangıç değişince oto-sıfırlama). Sizing %10-30 (güvene göre), max 5 pozisyon. Çıkış: breakeven(+%2), kısmi kâr(ilk hedef yarı), trailing, TP/SL/SAT. TÜM yönetim hafta içi 09:55-18:05.
+
+**Bildirim:** saat başı Telegram (HİSSE TARA + AI TRADER durumu + XU100 relatif). Komutlar: /durum /pozisyonlar. Sağlık alarmı + FATAL bildirimi.
+
+**Çalışma:** `trade.yml` self-loop (cron başlatır, iş 10-18 her 20dk tarar — GitHub cron güvenilmezliğini aşar). Repo public → Actions sınırsız.
+
+**Açık işler:** AI (Claude) sermaye dağıtıcısı (onay bekliyor); kalite eşiklerini backtest'le doğrulama.
