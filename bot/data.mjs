@@ -1,5 +1,6 @@
 // Veri katmanı — Yahoo Finance (Node'dan doğrudan, proxy yok).
-// 15m mumlar (sinyal) + günlük mumlar (üst trend). MCP daily seyrek olduğu için Yahoo kullanılır.
+// SİNYAL: günlük mumlar (çok-günlük pozisyon için doğru tf; MA50/MA200/ADX anlamlı).
+// ÜST TREND: haftalık mumlar. (15dk artık kullanılmıyor — çok-günlük tutuşta gürültüydü.)
 const UA={'User-Agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'};
 
 async function yfetch(sym, interval, range, timeout=8000){
@@ -20,8 +21,9 @@ async function yfetch(sym, interval, range, timeout=8000){
     return rows;
   }catch(e){ clearTimeout(tid); return []; }
 }
-export const fetch15m = sym => yfetch(sym,'15m','5d');
-export const fetchDaily = sym => yfetch(sym,'1d','1y');
+export const fetch15m = sym => yfetch(sym,'15m','5d');     // (kullanımdan kalktı, dursun)
+export const fetchDaily = sym => yfetch(sym,'1d','2y');    // sinyal: ~500 günlük mum → MA200 geçerli
+export const fetchWeekly = sym => yfetch(sym,'1wk','5y');  // üst trend: haftalık
 // Endeks (XU100 vb.) son kapanışı — portföyü endeksle kıyaslamak için
 export async function fetchIndexClose(sym='XU100'){
   const rows = await yfetch(sym,'1d','5d');

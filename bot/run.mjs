@@ -5,7 +5,7 @@
 // State Gist'te (feybot_paper.json). Bağımlılıksız (Node 20+ ESM).
 
 import { getSignals, enrichData, getHigherTrend } from "./engine.mjs";
-import { fetch15m, fetchDaily, fetchIndexClose } from "./data.mjs";
+import { fetchDaily, fetchWeekly, fetchIndexClose } from "./data.mjs";
 import { fetchNews } from "./news.mjs";
 import syms from "./symbols.json" with { type: "json" };
 import SECTORS from "./sectors.json" with { type: "json" };
@@ -73,20 +73,25 @@ async function gistPut(files) {
 
 // ---------- Tarama (motor) ----------
 async function scanOne(sym) {
-  const s = await fetch15m(sym);
-  if (s.length < 20) return null;
-  const d = s[s.length - 1];
-  if (s.slice(-5).reduce((a, b) => a + (b.volume || 0), 0) / 5 * (d?.close || 0) < 1e5) return null;
-  const y = await fetchDaily(sym);
-  const k = getSignals(enrichData(s), getHigherTrend(y), y);
+  // SİNYAL = GÜNLÜK mum (çok-günlük pozisyon için doğru tf; MA50/MA200/ADX geçerli).
+  const daily = await fetchDaily(sym);
+  if (daily.length < 60) return null;                                  // yeterli geçmiş yoksa atla
+  const ed = enrichData(daily);
+  const last = ed[ed.length - 1];
+  if (!last) return null;
+  // Likidite: günlük ortalama işlem hacmi (son 20 gün) × fiyat < 5M TL ise ele
+  const avgVol = daily.slice(-20).reduce((a, b) => a + (b.volume || 0), 0) / Math.min(20, daily.length);
+  if (avgVol * last.close < 5e6) return null;
+  const weekly = await fetchWeekly(sym);                               // ÜST TREND = haftalık
+  const k = getSignals(ed, getHigherTrend(weekly), weekly);
   if (!k || k.final === "NÖTR") return null;
   // KALİTE FİLTRESİ — daha isabetli, daha az gürültü:
   if (k.confidence < MIN_CONF) return null;                          // zayıf sinyalleri ele (varsayılan 65)
   if ((k.adx || 0) < MIN_ADX) return null;                           // trendsiz/choppy = gürültü (ADX<20)
   if ((k.htfNote || "").includes("⚠")) return null;                  // üst zaman dilimi çelişkili
-  if (k.final === "AL" && k.higherTrend === "ASAGI") return null;    // düşen günlük trende karşı ALMA
-  if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;  // yükselen trende karşı SATMA
-  return { sym, signal: k.final, confidence: k.confidence, price: d.close,
+  if (k.final === "AL" && k.higherTrend === "ASAGI") return null;    // düşen HAFTALIK trende karşı ALMA
+  if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;  // yükselen HAFTALIK trende karşı SATMA
+  return { sym, signal: k.final, confidence: k.confidence, price: last.close,
            stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend };
 }
 async function scanAll() {
@@ -102,8 +107,8 @@ async function scanAll() {
 // ---------- AI TRADER (paper trading) ----------
 async function currentPrice(sym, scanMap) {
   if (scanMap[sym]) return scanMap[sym].price;
-  const s = await fetch15m(sym);
-  return s.length ? s[s.length - 1].close : null;
+  const d = await fetchDaily(sym);                 // taramada yoksa güncel fiyat = son günlük kapanış
+  return d.length ? d[d.length - 1].close : null;
 }
 
 async function runPaper(signals, xuNow) {
