@@ -85,13 +85,14 @@ async function scanOne(sym) {
   const weekly = await fetchWeekly(sym);                               // ÜST TREND = haftalık
   const k = getSignals(ed, getHigherTrend(weekly), weekly);
   if (!k || k.final === "NÖTR") return null;
-  // KALİTE FİLTRESİ — daha isabetli, daha az gürültü:
-  if (k.confidence < MIN_CONF) return null;                          // zayıf sinyalleri ele (varsayılan 65)
-  if ((k.adx || 0) < MIN_ADX) return null;                           // trendsiz/choppy = gürültü (ADX<20)
-  if ((k.htfNote || "").includes("⚠")) return null;                  // üst zaman dilimi çelişkili
-  if (k.final === "AL" && k.higherTrend === "ASAGI") return null;    // düşen HAFTALIK trende karşı ALMA
-  if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;  // yükselen HAFTALIK trende karşı SATMA
-  return { sym, signal: k.final, confidence: k.confidence, price: last.close,
+  // KALİTE FİLTRESİ — daha isabetli, daha az gürültü. DİP DÖNÜŞLER muaf (karşı-trend doğrulanmış giriş).
+  const isDip = !!k.dipSignal;
+  if (k.confidence < MIN_CONF) return null;                                 // zayıf sinyalleri ele (varsayılan 65)
+  if (!isDip && (k.adx || 0) < MIN_ADX) return null;                        // trendsiz/choppy gürültü (dip hariç)
+  if (!isDip && (k.htfNote || "").includes("⚠")) return null;               // üst zaman dilimi çelişkili (dip hariç)
+  if (!isDip && k.final === "AL" && k.higherTrend === "ASAGI") return null; // düşen trende momentum-AL yok (dip hariç)
+  if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;         // yükselen trende karşı SATMA
+  return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0,
            stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend };
 }
 async function scanAll() {
