@@ -886,3 +886,12 @@ standalone/  7 dosya · 300 KB total
 **Çalışma:** `trade.yml` self-loop (cron başlatır, iş 10-18 her 20dk tarar — GitHub cron güvenilmezliğini aşar). Repo public → Actions sınırsız.
 
 **Açık işler:** AI (Claude) sermaye dağıtıcısı (onay bekliyor); kalite eşiklerini backtest'le doğrulama.
+
+### v3.1 — Hisse seçim katmanı + backtest (2026-06-17)
+- **Göreli güç (RS vs XU100):** hissenin 60g getirisi − XU100 60g getirisi. Endeksten belirgin zayıf (RS<-3) AL elenir (dip hariç). RS≠RSI (RSI momentum, RS endekse kıyas).
+- **R:R sıralaması:** adaylar (hedef−fiyat)/(fiyat−stop) oranına göre de sıralanır.
+- **Sektör liderliği:** ortalama RS medyan üstü sektörler "güçlü" → seçimde +bonus.
+- **Hacim teyidi:** AL'da son hacim 20g-ort'un %70'inin altındaysa (kuruma) elenir (dip hariç).
+- **Momentum confluence:** RSI+MACD+MOM hemfikir ×1.18, çelişki ×0.72.
+- **Backtest (`bot/backtest.mjs`, 759 AL/1y/10g ileri):** genel %50 isabet/+%0.49; **dip dönüşler %55/+%5.45 (en iyi kenar)** → seçimde dip'e bonus. Güven kusursuz kalibre değil → R:R+RS+exit mantığı kritik.
+- Seçim skoru: güven + potansiyel + R:R×3 + RS×0.5 + sektör + dip×2.5.

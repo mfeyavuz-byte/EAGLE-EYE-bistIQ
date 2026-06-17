@@ -79,6 +79,7 @@ async function scanOne(sym) {
   const ed = enrichData(daily);
   const last = ed[ed.length - 1];
   if (!last) return null;
+  const _ago = daily[Math.max(0, daily.length - 60)]; const ret60 = _ago ? (last.close - _ago.close) / _ago.close * 100 : 0;
   // Likidite: günlük ortalama işlem hacmi (son 20 gün) × fiyat < 5M TL ise ele
   const avgVol = daily.slice(-20).reduce((a, b) => a + (b.volume || 0), 0) / Math.min(20, daily.length);
   if (avgVol * last.close < 5e6) return null;
@@ -92,8 +93,9 @@ async function scanOne(sym) {
   if (!isDip && (k.htfNote || "").includes("⚠")) return null;               // üst zaman dilimi çelişkili (dip hariç)
   if (!isDip && k.final === "AL" && k.higherTrend === "ASAGI") return null; // düşen trende momentum-AL yok (dip hariç)
   if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;         // yükselen trende karşı SATMA
+  if (!isDip && k.final === "AL" && (last.volume || 0) < avgVol * 0.7) return null; // hacim kuruması = teyitsiz AL
   return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0,
-           stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend };
+           stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend, ret60: +ret60.toFixed(1), rr: (k.target1 && k.stopLoss && last.close > k.stopLoss) ? +((k.target1 - last.close) / (last.close - k.stopLoss)).toFixed(2) : 0 };
 }
 async function scanAll() {
   const out = [];
@@ -177,7 +179,7 @@ async function runPaper(signals, xuNow) {
   const upside = s => (s.target1 && s.price) ? (s.target1 - s.price) / s.price * 100 : 0;
   const ddOK = !st.dayStart || (equity - st.dayStart) / st.dayStart > -0.03;
   const candidates = signals.filter(s => s.signal === "AL" && !st.pos[s.sym])
-    .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 }))   // güç + potansiyel
+    .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 + (s.rr || 0) * 3 + (s.rs || 0) * 0.5 + (s.secStrong ? 5 : 0) + (s.dip ? s.dip * 2.5 : 0) }))   // güven+potansiyel+R:R+göreli güç+sektör+dip(backtest:en iyi kenar)
     .sort((a, b) => b._score - a._score);
   for (const sig of candidates) {
     if (Object.keys(st.pos).length >= MAX_POS || !ddOK) break;
@@ -245,10 +247,24 @@ async function handleCommands(st) {
 async function main() {
   const t0 = Date.now();
   console.log("Tarama başlıyor:", syms.length, "sembol");
-  const signals = await scanAll();
+  let signals = await scanAll();
   console.log(`Tarama bitti ${((Date.now() - t0) / 1e3).toFixed(1)}s · ${signals.length} sinyal (${signals.filter(s => s.signal === "AL").length} AL, ${signals.filter(s => s.signal === "SAT").length} SAT)`);
 
   const xuNow = await fetchIndexClose("XU100").catch(() => null);  // endeks (XU100) anlık
+
+  // ---------- GÖRELİ GÜÇ (RS vs XU100) + SEKTÖR LİDERLİĞİ ----------
+  const idxRows = await fetchDaily("XU100").catch(() => []);
+  const idxRet60 = idxRows.length >= 60 ? (idxRows[idxRows.length - 1].close - idxRows[idxRows.length - 60].close) / idxRows[idxRows.length - 60].close * 100 : 0;
+  for (const s of signals) s.rs = +((s.ret60 || 0) - idxRet60).toFixed(1);   // endekse göre fazla getiri
+  const _rsCut = signals.length;
+  signals = signals.filter(s => s.signal !== "AL" || s.dip || s.rs > -3);     // endeksten belirgin zayıf AL'ı ele (dip hariç)
+  // Sektör gücü: ortalama RS'in medyan üstündeki sektörler "güçlü"
+  const secRS = {}, secN = {};
+  for (const s of signals) { const sec = sectorOf(s.sym); if (sec) { secRS[sec] = (secRS[sec] || 0) + s.rs; secN[sec] = (secN[sec] || 0) + 1; } }
+  const secAvg = Object.fromEntries(Object.keys(secRS).map(k => [k, secRS[k] / secN[k]]));
+  const _sv = Object.values(secAvg).sort((a, b) => b - a); const _med = _sv.length ? _sv[Math.floor(_sv.length / 2)] : 0;
+  for (const s of signals) { const sec = sectorOf(s.sym); s.secStrong = !!(sec && secAvg[sec] != null && secAvg[sec] >= _med); }
+  console.log(`Göreli güç: XU100 60g %${idxRet60.toFixed(1)} · zayıf-RS elenen AL: ${_rsCut - signals.length}`);
 
   // ---------- HABER-DUYARLI SİNYAL: haberin etkisine göre güveni ayarla ----------
   let news = [];
