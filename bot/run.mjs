@@ -109,7 +109,13 @@ async function currentPrice(sym, scanMap) {
 async function runPaper(signals, xuNow) {
   const today = new Date().toISOString().slice(0, 10);
   let st = await gistGet(PAPER_FILE, null);
-  if (!st || typeof st.cash !== "number") st = { cash: START, start: START, pos: {}, trades: [], dayKey: today, dayStart: START, startDate: today, xuStart: xuNow || null };
+  // Sıfırlama/migrasyon: Gist boşsa VEYA başlangıç sermayesi değiştiyse (ör. 100k→500k) temiz başlat.
+  if (!st || typeof st.cash !== "number" || st.start !== START) {
+    const keepOffset = (st && st.tgOffset) || 0;
+    st = { cash: START, start: START, pos: {}, trades: [], dayKey: today, dayStart: START, startDate: today, xuStart: xuNow || null, lastReportHour: -1, hourOpens: [], hourCloses: [], tgOffset: keepOffset };
+    await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });   // sıfırlamayı hemen kaydet
+    console.log(`🔄 Portföy ${START.toLocaleString("tr-TR")}₺ ile SIFIRLANDI (Gist'teki eski state silindi).`);
+  }
   st.pos = st.pos || {}; st.trades = st.trades || [];
   if (!st.xuStart && xuNow) st.xuStart = xuNow;   // endeks başlangıcı (relatif getiri için)
   const scanMap = Object.fromEntries(signals.map(s => [s.sym, s]));
