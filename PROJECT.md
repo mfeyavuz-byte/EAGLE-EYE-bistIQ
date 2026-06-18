@@ -895,3 +895,10 @@ standalone/  7 dosya · 300 KB total
 - **Momentum confluence:** RSI+MACD+MOM hemfikir ×1.18, çelişki ×0.72.
 - **Backtest (`bot/backtest.mjs`, 759 AL/1y/10g ileri):** genel %50 isabet/+%0.49; **dip dönüşler %55/+%5.45 (en iyi kenar)** → seçimde dip'e bonus. Güven kusursuz kalibre değil → R:R+RS+exit mantığı kritik.
 - Seçim skoru: güven + potansiyel + R:R×3 + RS×0.5 + sektör + dip×2.5.
+
+### v3.2 — İndikatör yapısal eklemeler (2026-06-17, bot+app ortak motor)
+- **Squeeze kırılım:** enrichData zaten `squeezeOff` (Bollinger, Keltner içinden çıkış = düşük-vol patlaması) üretiyordu ama kullanılmıyordu → net puan ×1.2. Backtest: squeeze sinyalleri %46 (genel %41 üstü).
+- **Anti-chasing / desteğe yakın:** fiyat ma20'den >%8 uzaksa ×0.85 (chasing riskli); trend içi geri çekilme (ma50 üstü, ma20'ye yakın) ×1.1.
+- **Rejim:** yatay piyasada (düşük ADX) Bollinger bant uçlarında mean-reversion (alt %15 +8, üst %15 −8).
+- **RSI giriş gate:** AL'da RSI≥63 elenir (backtest: erken giriş %42 vs aşırı-alım %34).
+- Gerçek-sonuç backtest (hedef-önce-stop): taban %37 → %41. Saf TA tavanı ~%40-55; asıl kâr R:R 1:2 + exit + dip + squeeze.
