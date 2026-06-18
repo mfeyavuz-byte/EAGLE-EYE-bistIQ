@@ -902,3 +902,37 @@ standalone/  7 dosya · 300 KB total
 - **Rejim:** yatay piyasada (düşük ADX) Bollinger bant uçlarında mean-reversion (alt %15 +8, üst %15 −8).
 - **RSI giriş gate:** AL'da RSI≥63 elenir (backtest: erken giriş %42 vs aşırı-alım %34).
 - Gerçek-sonuç backtest (hedef-önce-stop): taban %37 → %41. Saf TA tavanı ~%40-55; asıl kâr R:R 1:2 + exit + dip + squeeze.
+
+---
+
+# 🤝 HANDOFF — Başka bir AI için devir notu (2026-06-18)
+
+## Mimari
+- **App:** `standalone/index.html` — TEK dosya, minified React (build yok, ~310KB). `<script>` blok **index 6** = ana uygulama. Düzenleme: python string-replace. Doğrulama: scripts[6]'ı çıkar → `node --check` + jsdom headless render (preview sunucusu sandbox'ta çalışmaz). Sekmeler: BIST / HABER / HİSSE TARA / ENDEKS TARA / AI TRADER / SENKRON.
+- **Bot (otonom, bulut):** `bot/` — Node ESM, GitHub Actions. `engine.mjs` (sinyal motoru), `data.mjs` (Yahoo), `run.mjs` (tarama+paper trading+Telegram), `news.mjs`+`news-impact.mjs`, `symbols.json` (197), `sectors.json`, `backtest.mjs`. Workflow: `.github/workflows/trade.yml` (self-loop) + `pages.yml`.
+- **Repo:** `mfeyavuz-byte/EAGLE-EYE-bistIQ` (public → Actions sınırsız). App: `mfeyavuz-byte.github.io/EAGLE-EYE-bistIQ/`.
+- **Gist `1ed22561b2f2803380f3dfb99cda53e7`:** `feybot_paper.json` (portföy), `eagle_news.json`, `eagle_sent.json`. **BOT YAZAR (GIST_ID secret token'ı), APP SADECE OKUR (tokensız, DEFAULT_GIST gömülü).**
+- **Secrets:** TG_TOKEN, TG_CHAT, GH_GIST_TOKEN, GIST_ID(=1ed2...).
+
+## ⚠️ KRİTİK TUZAKLAR (bunları bil yoksa bozarsın)
+1. **engine.mjs ve index.html'deki `getSignals` AYNI mantık, İKİ yerde.** Motor değişikliği HER İKİSİNE de uygulanmalı, yoksa app≠bot.
+2. **APP ASLA GIST'E YAZMAMALI** — sadece bot yazar. App'in `[Se]` sync'i + in-app trade'i KAPALI tutuldu; açarsan botun pozlarını EZER (bir kez ezdi, BAKAB pozları gist geçmişinden kurtarıldı). 
+3. **Motor GÜNLÜK mum kullanır** (15dk değil): 15dk'da MA200 hep null → düşen hisseye AL (falling-knife). `fetchDaily` 2y, üst trend `fetchWeekly`.
+4. **`node --check` geçmesi JSX ağacının DOĞRU olduğunu göstermez** — yanlış parantez render'ı sadece nav'a çökertir. jsdom ile doğrula: `root.firstElementChild.className==='has-bottom-nav'` olmalı, innerHTML ~95k+.
+5. **GitHub cron güvenilmez** → trade.yml self-loop (cron başlatır, iş 10-18 her 20dk tarar). **Çalışan döngü, BAŞLADIĞI commit'in kodunu kullanır** — yeni kod için eski run'ı Cancel + Run workflow gerekir.
+6. Bot `st.start !== START` ise portföyü sıfırlar (START_CASH env, varsayılan 500k).
+7. Pozisyon yönetimi sadece hafta içi 09:55–18:05 (isTradingHours).
+
+## Sinyal/strateji gerçeği (backtest'li)
+Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (kanıt). İşe yarayanlar: **dip dönüşler (%50-55), squeeze kırılım (%46), RSI<63 giriş, R:R 1:2, breakeven+trailing+kısmi kâr**. İsabet düşük ama R:R ile beklenti pozitif. Eşikler env: MIN_CONF=65, MIN_ADX=20.
+
+## AÇIK İŞLER
+- **AI (Claude) sermaye dağıtıcısı**: önerildi, KURULMADI. `ANTHROPIC_API_KEY` secret + run.mjs'de Claude'a portföy+adaylar gönderip JSON dağıtım planı alma. En yüksek değerli sıradaki iş.
+- Çalışan bot ESKİ commit'te olabilir (730a21e) — son motor (squeeze/RS/RSI gate) bir sonraki run'da devreye girer.
+- BAKAB pozları gist'e elle restore ediliyordu (geçmişten kurtarıldı).
+
+## Önceki AI'ın (benim) HATALARIM — tekrarlama
+1. **Kök sebebi tam tespit etmeden parçalı fix** yaptım — kullanıcının baş şikayeti. Önce TÜM kaynakları kanıtla (canlı veri/backtest), sonra düzelt.
+2. **App'in botun gist'ini ezmesine izin verdim** → gerçek pozisyonlar silindi. İki yazıcı bir gist = felaket; tek yazıcı (bot) kuralını koru.
+3. Gist'i, botun gerçek gist'i olduğunu doğrulamadan gömdüm/varsaydım.
+4. Açık emirleri tam uygulamak yerine bazen eksik bırakıp fazla açıklama/soru yaptım. Kullanıcı net emir verince TAM uygula.
