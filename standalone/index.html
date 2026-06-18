@@ -137,10 +137,13 @@ async function syncGist(state){
     if(d.id)localStorage.setItem("feybot_gistid",d.id);
   }
 }
+const DEFAULT_GIST="1ed22561b2f2803380f3dfb99cda53e7";  // botun GIST_ID'si gömülür → her cihaz config'siz okur (secret gist token'sız okunur)
 async function loadGist(){
-  const tok=localStorage.getItem("feybot_ghtoken"),gid=localStorage.getItem("feybot_gistid");
-  if(!tok||!tok.trim()||!gid||!gid.trim())throw new Error("GitHub token veya Gist ID eksik");
-  const r=await fetch("https://api.github.com/gists/"+gid,{headers:{Authorization:"Bearer "+tok}});
+  const gid=(localStorage.getItem("feybot_gistid")||DEFAULT_GIST).trim();
+  if(!gid)throw new Error("Gist ID yok");
+  const tok=localStorage.getItem("feybot_ghtoken");
+  const _h=tok&&tok.trim()?{Authorization:"Bearer "+tok.trim()}:{};  // token varsa kullan, yoksa token'sız (secret gist okunur)
+  const r=await fetch("https://api.github.com/gists/"+gid,{headers:_h});
   if(!r.ok)throw new Error("Gist yok veya token gecersiz ("+r.status+")");
   const d=await r.json();
   const content=d.files?.["feybot_paper.json"]?.content;
