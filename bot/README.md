@@ -5,13 +5,13 @@ Uygulamanın **kendi motorunu** (getSignals, 19 indikatör) buluta taşır.
 
 ## Ne yapar
 1. **197 BIST hissesini** uygulamadaki AYNI motorla tarar → **AL/SAT sinyalleri** → Telegram
-   (HİSSE TARA'nın aynısı — 15m mum + günlük üst-trend, güven ≥ %50)
+   (HİSSE TARA'nın aynısı — GÜNLÜK mum + haftalık üst-trend, güven ≥ %65, ADX ≥ 20)
 2. **AI TRADER** sanal portföyünü yönetir → pozisyon **açar/kapatır** (TP / Zarar Durdur / Trailing / SAT sinyali) → Telegram
 3. Hafta içi 10:00 / 12:00 / 14:00 / 16:00 / 18:00 (İstanbul) otomatik çalışır
 
 Dosyalar:
 - `engine.mjs` — uygulamadan birebir çıkarılmış motor (saf JS)
-- `data.mjs` — Yahoo Finance veri (15m + günlük, doğrudan)
+- `data.mjs` — Yahoo Finance veri (günlük sinyal 2y + haftalık üst-trend, doğrudan)
 - `run.mjs` — tarama + paper trading + Telegram
 - `symbols.json` / `sectors.json` — BIST hisse listesi + sektör eşlemesi
 

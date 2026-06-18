@@ -936,3 +936,9 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 2. **App'in botun gist'ini ezmesine izin verdim** → gerçek pozisyonlar silindi. İki yazıcı bir gist = felaket; tek yazıcı (bot) kuralını koru.
 3. Gist'i, botun gerçek gist'i olduğunu doğrulamadan gömdüm/varsaydım.
 4. Açık emirleri tam uygulamak yerine bazen eksik bırakıp fazla açıklama/soru yaptım. Kullanıcı net emir verince TAM uygula.
+
+## Son durum (2026-06-18, devir)
+- `bot/scan.mjs` (eski/ölü MCP tarayıcı) SİLİNDİ — workflow yalnız `run.mjs` çağırıyor.
+- `bot/README.md` düzeltildi: motor 15dk değil **GÜNLÜK** mum, güven **≥%65**, ADX≥20.
+- Tüm `bot/*.mjs` + `*.json` sözdizimi temiz (`node --check` geçti).
+- Açık tek kullanıcı-işi: gerçek pozları (BAKAB/HEKTS/KARSN/DEVA/AFYON) **`1ed2...`** gist'indeki `feybot_paper.json`'a geri yaz (app artık yazmadığı için ezilmez). Doğru gist `1ed22561...`, `3ce7...` değil.
