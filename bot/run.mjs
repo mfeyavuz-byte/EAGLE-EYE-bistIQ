@@ -48,17 +48,20 @@ async function sendTG(text) {
 }
 
 // ---------- Gist state ----------
+// Okuma BAŞARISIZ (rate-limit/5xx/ağ/parse) ile gerçekten BOŞ gist'i ayırt et:
+// başarısızlıkta "bilinmiyor" döndür → çağıran ASLA sıfırlamaz/yazmaz (eski bug: tek hata portföyü siliyordu).
+const READ_FAILED = Symbol("gist_read_failed");
 async function gistGet(file, fallback) {
   if (!GIST_TOKEN || !GIST_ID) return fallback;
   try {
     const r = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
       headers: { Authorization: "Bearer " + GIST_TOKEN, Accept: "application/vnd.github+json" },
     });
-    if (!r.ok) return fallback;
+    if (!r.ok) return READ_FAILED;                 // geçici hata (rate-limit/5xx) — boş SAYMA
     const g = await r.json();
     const c = g.files?.[file]?.content;
-    return c ? JSON.parse(c) : fallback;
-  } catch { return fallback; }
+    return c ? JSON.parse(c) : fallback;           // gist var, dosya yok = gerçekten ilk kez
+  } catch { return READ_FAILED; }                  // ağ/parse hatası — durum bilinmiyor
 }
 async function gistPut(files) {
   if (!GIST_TOKEN || !GIST_ID) return;
@@ -118,14 +121,25 @@ async function currentPrice(sym, scanMap) {
 async function runPaper(signals, xuNow) {
   const today = new Date().toISOString().slice(0, 10);
   let st = await gistGet(PAPER_FILE, null);
-  // Sıfırlama/migrasyon: Gist boşsa VEYA başlangıç sermayesi değiştiyse (ör. 100k→500k) temiz başlat.
-  if (!st || typeof st.cash !== "number" || st.start !== START) {
+  // KRİTİK: Gist okunamadıysa (geçici hata) state'i BİLMİYORUZ → bu run'ı ATLA, ASLA sıfırlama/yazma.
+  if (st === READ_FAILED) {
+    console.log("⚠ Gist okunamadı (geçici) — AI TRADER bu run atlandı, portföy KORUNDU (sıfırlama YOK).");
+    return;
+  }
+  // Yalnız gist GERÇEKTEN boşsa (ilk kez) temiz başlat. VAR OLAN portföy ASLA silinmez (start değişse bile).
+  const valid = st && typeof st.cash === "number" && st.pos && typeof st.pos === "object";
+  if (!valid) {
     const keepOffset = (st && st.tgOffset) || 0;
     st = { cash: START, start: START, pos: {}, trades: [], dayKey: today, dayStart: START, startDate: today, xuStart: xuNow || null, lastReportHour: -1, hourOpens: [], hourCloses: [], tgOffset: keepOffset };
-    await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });   // sıfırlamayı hemen kaydet
-    console.log(`🔄 Portföy ${START.toLocaleString("tr-TR")}₺ ile SIFIRLANDI (Gist'teki eski state silindi).`);
+    await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
+    console.log(`🆕 İlk kez: portföy ${START.toLocaleString("tr-TR")}₺ ile başlatıldı.`);
   }
+  // Migrasyon: eksik alanları tamamla — pozisyonları ASLA silmeden.
   st.pos = st.pos || {}; st.trades = st.trades || [];
+  if (typeof st.start !== "number") st.start = st.cash;
+  if (!st.dayStart) st.dayStart = st.start;
+  if (!st.dayKey) st.dayKey = today;
+  if (!st.startDate) st.startDate = today;
   if (!st.xuStart && xuNow) st.xuStart = xuNow;   // endeks başlangıcı (relatif getiri için)
   const scanMap = Object.fromEntries(signals.map(s => [s.sym, s]));
   const satSet = new Set(signals.filter(s => s.signal === "SAT").map(s => s.sym));
