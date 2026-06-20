@@ -1,5 +1,5 @@
-// EAGLE EYE: bistIQ SW — v94 (v7.2: akilli siralama + EAGLE EYE rename + logo header + Veri cekiliyor)
-const CACHE = 'feysbot-v105';
+// EAGLE EYE: bistIQ SW — v106 (FIX: gist/api.github.com artik cache'lenmiyor → pozlar hard-refresh'siz guncel)
+const CACHE = 'feysbot-v106';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
@@ -14,8 +14,9 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const u = new URL(e.request.url);
-  // API çağrıları cache'lenmez
-  if (u.host.includes('yahoo.com') || u.host.includes('emailjs.com') ||
+  // API çağrıları cache'lenmez (gist/api.github.com DAHİL — yoksa pozlar eski cache'ten gelir)
+  if (u.host.includes('api.github.com') || u.host.includes('githubusercontent.com') ||
+      u.host.includes('yahoo.com') || u.host.includes('emailjs.com') ||
       u.host.includes('binance.com') || u.host.includes('anthropic.com') ||
       u.host.includes('isyatirim') || u.host.includes('allorigins') ||
       u.host.includes('corsproxy') || u.host.includes('codetabs') ||
