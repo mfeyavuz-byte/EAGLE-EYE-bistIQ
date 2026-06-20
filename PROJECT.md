@@ -942,3 +942,8 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - `bot/README.md` düzeltildi: motor 15dk değil **GÜNLÜK** mum, güven **≥%65**, ADX≥20.
 - Tüm `bot/*.mjs` + `*.json` sözdizimi temiz (`node --check` geçti).
 - Açık tek kullanıcı-işi: gerçek pozları (BAKAB/HEKTS/KARSN/DEVA/AFYON) **`1ed2...`** gist'indeki `feybot_paper.json`'a geri yaz (app artık yazmadığı için ezilmez). Doğru gist `1ed22561...`, `3ce7...` değil.
+
+## v3.3 — Risk & rejim & öğrenme (bot/run.mjs)
+- **Piyasa rejimi:** XU100 < MA200 ise DÜŞÜŞ → max poz 5→2, sadece dip kurulumları, risk yarıya (run.mjs main + runPaper `bearRegime`).
+- **ATR risk paritesi:** stop = giriş−2×ATR, hedef = +2R; lot = equity×%1 / stop-mesafesi (bear'de %0.5), tek poz tavanı %30, nakit sınırı. scanOne artık `atr` döndürüyor. Eski sabit %10-30 sizing kaldırıldı.
+- **Kurulum öğrenme:** her poz `setup` (dip/trend/counter) etiketli; kapanışta trade'e yazılır. `disabledSetups`: ≥10 işlemde net-zararlı kurulumu otomatik durdurur. Telegram raporunda kurulum kazanan/toplam + rejim satırı.

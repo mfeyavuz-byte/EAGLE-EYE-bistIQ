@@ -98,7 +98,7 @@ async function scanOne(sym) {
   if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;         // yükselen trende karşı SATMA
   if (!isDip && k.final === "AL" && (last.volume || 0) < avgVol * 0.7) return null; // hacim kuruması = teyitsiz AL
   if (!isDip && k.final === "AL" && (last.rsi || 0) >= 63) return null; // aşırı-alımda/geç girişi ele (backtest: erken giriş %42 vs geç %34)
-  return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0,
+  return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null,
            stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend, ret60: +ret60.toFixed(1), rr: (k.target1 && k.stopLoss && last.close > k.stopLoss) ? +((k.target1 - last.close) / (last.close - k.stopLoss)).toFixed(2) : 0 };
 }
 async function scanAll() {
@@ -111,6 +111,21 @@ async function scanAll() {
   return out;
 }
 
+// ---------- Kurulum (setup) etiketi + performans öğrenme ----------
+// Her AL adayını kurulum tipine etiketle; kapanan işlemlerden tip-bazlı beklenti ölç.
+function setupOf(s) { return s.dip ? "dip" : (s.htf === "YUKARI" ? "trend" : "counter"); }
+function setupStats(trades) {
+  const m = {};
+  for (const t of trades || []) { const k = t.setup || "?"; (m[k] = m[k] || { n: 0, w: 0, pnl: 0 }); m[k].n++; if ((t.pnl || 0) > 0) m[k].w++; m[k].pnl += (t.pnl || 0); }
+  return m;
+}
+// ≥10 kapanan işlemde net zararda olan kurulumları otomatik durdur (ampirik budama)
+function disabledSetups(trades) {
+  const out = new Set();
+  for (const [k, v] of Object.entries(setupStats(trades))) if (v.n >= 10 && v.pnl < 0) out.add(k);
+  return out;
+}
+
 // ---------- AI TRADER (paper trading) ----------
 async function currentPrice(sym, scanMap) {
   if (scanMap[sym]) return scanMap[sym].price;
@@ -118,7 +133,7 @@ async function currentPrice(sym, scanMap) {
   return d.length ? d[d.length - 1].close : null;
 }
 
-async function runPaper(signals, xuNow) {
+async function runPaper(signals, xuNow, bearRegime = false) {
   const today = new Date().toISOString().slice(0, 10);
   let st = await gistGet(PAPER_FILE, null);
   // KRİTİK: Gist okunamadıysa (geçici hata) state'i BİLMİYORUZ → bu run'ı ATLA, ASLA sıfırlama/yazma.
@@ -168,7 +183,7 @@ async function runPaper(signals, xuNow) {
       const half = Math.floor(ps.lot / 2);
       const pnl = +((cur - ps.entry) * half).toFixed(0), pnlPct = +(pct * 100).toFixed(2);
       st.cash += half * cur;
-      st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: half, pnl, pnlPct, open: ps.date, close: today, reason: "TP-yarı" });
+      st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: half, pnl, pnlPct, open: ps.date, close: today, reason: "TP-yarı", setup: ps.setup || "?" });
       ps.lot -= half; ps.partial = true; ps.tp = +(cur * 1.05).toFixed(2);   // kalan için hedefi yukarı taşı
       closed.push(`💰 ${sym} YARI KÂR @ ${cur}₺ · +%${pnlPct} (${pnl >= 0 ? "+" : ""}${pnl}₺) · kalan ${ps.lot} lot trailing'de`);
       continue;
@@ -181,30 +196,41 @@ async function runPaper(signals, xuNow) {
       const label = { SL: "Zarar Durdur", BE: "Başabaş (kâr korundu)", TS: "Trailing Stop", SIG: "SAT sinyali", TP: "Hedef" }[reason];
       const pnl = +((cur - ps.entry) * ps.lot).toFixed(0), pnlPct = +(pct * 100).toFixed(2);
       st.cash += ps.lot * cur;
-      st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: ps.lot, pnl, pnlPct, open: ps.date, close: today, reason });
+      st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: ps.lot, pnl, pnlPct, open: ps.date, close: today, reason, setup: ps.setup || "?" });
       delete st.pos[sym];
       closed.push(`${pct >= 0 ? "📈" : "📉"} ${sym} @ ${cur}₺ · ${label} · K/Z %${pnlPct} (${pnl >= 0 ? "+" : ""}${pnl}₺)`);
     }
   }
 
-  // --- AÇMA: en güçlü + en yüksek potansiyelli AL sinyalleri ---
-  // Sizing: güvene göre %10-%30. Seçim: güven + hedefe yükseliş potansiyeli (en iyi önce).
-  const MAX_POS = 5;
-  const sizePct = c => c >= 85 ? 0.30 : c >= 70 ? 0.20 : 0.10;   // %10–%30
+  // --- AÇMA: ATR-tabanlı risk + piyasa rejimi + kurulum öğrenme ---
+  // Seçim: güven+potansiyel+R:R+RS+sektör+dip. Boyut: işlem başına SABİT %risk (lot = risk / ATR-stop mesafesi).
+  const MAX_POS = bearRegime ? 2 : 5;                 // düşüş rejiminde daha az pozisyon
+  const RISK_PCT = 0.01 * (bearRegime ? 0.5 : 1);     // equity'nin %1'i risk (bear'de %0.5)
+  const MAXCOST = 0.30;                               // tek pozisyon en fazla portföyün %30'u
   const upside = s => (s.target1 && s.price) ? (s.target1 - s.price) / s.price * 100 : 0;
   const ddOK = !st.dayStart || (equity - st.dayStart) / st.dayStart > -0.03;
-  const candidates = signals.filter(s => s.signal === "AL" && !st.pos[s.sym])
+  const disabled = disabledSetups(st.trades);         // ampirik: net-zararlı kurulumları durdur
+  let candidates = signals.filter(s => s.signal === "AL" && !st.pos[s.sym] && !disabled.has(setupOf(s)));
+  if (bearRegime) candidates = candidates.filter(s => s.dip);   // düşüş rejiminde SADECE dip dönüşleri
+  candidates = candidates
     .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 + (s.rr || 0) * 3 + (s.rs || 0) * 0.5 + (s.secStrong ? 5 : 0) + (s.dip ? s.dip * 2.5 : 0) }))   // güven+potansiyel+R:R+göreli güç+sektör+dip(backtest:en iyi kenar)
     .sort((a, b) => b._score - a._score);
   for (const sig of candidates) {
     if (Object.keys(st.pos).length >= MAX_POS || !ddOK) break;
     const conf = sig.confidence || 0, j = sig.price, up = upside(sig);
-    const Q = Math.floor(equity * sizePct(conf) / j);              // portföyün %10–%30'u
-    if (Q > 0 && Q * j <= st.cash) {
+    // ATR-tabanlı stop (2×ATR) + 2R hedef; ATR yoksa %3 stop'a düş (volatiliteye duyarlı).
+    const slDist = (sig.atr && sig.atr > 0) ? +(2 * sig.atr).toFixed(2) : +(j * 0.03).toFixed(2);
+    const sl = +(j - slDist).toFixed(2), tp = +(j + 2 * slDist).toFixed(2);
+    // RİSK PARİTESİ: her işlem equity'nin sabit %'sini riske atar → lot = risk / stop-mesafesi
+    let Q = slDist > 0 ? Math.floor(equity * RISK_PCT / slDist) : 0;
+    if (Q * j > equity * MAXCOST) Q = Math.floor(equity * MAXCOST / j);   // tek-pozisyon tavanı
+    if (Q * j > st.cash) Q = Math.floor(st.cash / j);                     // nakit sınırı
+    if (Q > 0 && sl < j) {
       st.cash -= Q * j;
-      const sl = sig.stopLoss || +(j * 0.99).toFixed(2), tp = sig.target1 || +(j * 1.04).toFixed(2);
-      st.pos[sig.sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0 };
-      opened.push(`📈 ${sig.sym} · ${Q} lot @ ${j}₺ (%${Math.round(sizePct(conf) * 100)} portföy) · güven %${conf} · potansiyel %${up.toFixed(1)} · stop ${sl} · hedef ${tp}`);
+      const setup = setupOf(sig);
+      st.pos[sig.sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0, setup };
+      const costPct = Math.round(Q * j / equity * 100);
+      opened.push(`📈 ${sig.sym} · ${Q} lot @ ${j}₺ (%${costPct} portföy · ${setup}) · güven %${conf} · potansiyel %${up.toFixed(1)} · stop ${sl} · hedef ${tp}`);
     }
   }
   } // seans (trading) bloğu sonu
@@ -270,6 +296,11 @@ async function main() {
   // ---------- GÖRELİ GÜÇ (RS vs XU100) + SEKTÖR LİDERLİĞİ ----------
   const idxRows = await fetchDaily("XU100").catch(() => []);
   const idxRet60 = idxRows.length >= 60 ? (idxRows[idxRows.length - 1].close - idxRows[idxRows.length - 60].close) / idxRows[idxRows.length - 60].close * 100 : 0;
+  // PİYASA REJİMİ: XU100 kendi MA200'ünün altındaysa düşüş rejimi → savunma (az poz · sadece dip · yarı risk)
+  const _xc = idxRows.map(r => r.close);
+  const xuMA200 = _xc.length >= 200 ? _xc.slice(-200).reduce((a, b) => a + b, 0) / 200 : null;
+  const bearRegime = !!(xuMA200 && xuNow && xuNow < xuMA200);
+  console.log(`Rejim: XU100 ${xuNow ?? "?"} vs MA200 ${xuMA200 ? xuMA200.toFixed(0) : "?"} → ${bearRegime ? "DÜŞÜŞ (savunma)" : "NORMAL"}`);
   for (const s of signals) s.rs = +((s.ret60 || 0) - idxRet60).toFixed(1);   // endekse göre fazla getiri
   const _rsCut = signals.length;
   signals = signals.filter(s => s.signal !== "AL" || s.dip || s.rs > -3);     // endeksten belirgin zayıf AL'ı ele (dip hariç)
@@ -318,7 +349,7 @@ async function main() {
   // Her run: tara + pozisyon yönet (sessiz, state'e biriktir). Mesaj saat başı gider.
   let st = null;
   if (GIST_ID && GIST_TOKEN) {
-    st = await runPaper(signals, xuNow);
+    st = await runPaper(signals, xuNow, bearRegime);
   } else {
     console.log("⚠ Gist yok — AI TRADER atlandı (state kalıcı olmadan paper trading her çalışmada sıfırlanır). GH_GIST_TOKEN + GIST_ID secret'larını ekle.");
   }
@@ -366,6 +397,9 @@ async function main() {
         m2 += `\n🏛 XU100: ${idxRet >= 0 ? "+" : ""}${idxRet.toFixed(2)}%`;
         m2 += `\n⚖️ Endekse relatif: ${rel >= 0 ? "+" : ""}${rel.toFixed(2)}% ${rel >= 0 ? "✅ üstünde" : "🔻 altında"}`;
       }
+      m2 += `\n🌐 Rejim: ${bearRegime ? "DÜŞÜŞ — savunma (az poz · sadece dip · yarı risk)" : "NORMAL"}`;
+      const ss = setupStats(st.trades);
+      if (Object.keys(ss).length) m2 += "\n🧪 Kurulum (kazanan/toplam): " + Object.entries(ss).map(([k, v]) => `${k} ${v.w}/${v.n}${v.pnl ? ` (${v.pnl >= 0 ? "+" : ""}${Math.round(v.pnl)}₺)` : ""}`).join(" · ");
       await sendTG(m2); sent++; await sleep(400);
       // raporu kaydet: bu saati işaretle, saatlik birikimi sıfırla
       st.lastReportHour = istHour; st.hourOpens = []; st.hourCloses = [];
