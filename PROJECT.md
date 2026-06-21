@@ -988,3 +988,8 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - **mcpEnrich her trading run'da** (top6 × 3 MCP çağrısı = ~18/run, her 20dk) → günde-1'e throttle veya gist-cache (yük + gecikme azalır). Fail-safe olduğu için bug değil.
 - **position-scan** günde 1 kez 197 günlük mumu YENİDEN çeker (scanAll zaten çekmişti) → izolasyon için bilinçli; istenirse paylaşımlı veriyle optimize edilir.
 - **App AYLIK vs bot position-scan paritesi:** app Stage-2 ÖZÜ (k'den), bot ek MA200-eğimi+6ay RS+OBV. Tam parite istenirse hizalanır.
+
+## v3.9 — PDF: Day/Swing/Aylık ayrımı
+- HİSSE TARA PDF'i (React, `#... 📄 PDF`) artık AL sinyallerini **⚡ Day · 📈 Swing · ⏳ Aylık · 📋 Diğer** alt-tablolarına ayırıyor (+ 📉 SAT korunur). `sec(t,a)` helper + `TH` ile tablo markup tekrarsız.
+- Aylık = `y.monthly` (Stage-2 bayrağı, v3.8). Diğer = day/swing/monthly dışı AL (hiç hisse kaybolmaz). swing+monthly hisse her iki bölümde de görünür (app sekmeleriyle tutarlı).
+- Sadece PDF document.write metni değişti — React render ağacına dokunulmadı. node --check geçti.
