@@ -980,3 +980,11 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - day/swing **bulma mantığına dokunulmadı**; sadece ayrı sekme eklendi. Tümü/Day/Swing/Aylık.
 - Not: App AYLIK = Stage-2 ÖZÜ (k'den). Bot position-scan.mjs ek olarak MA200-eğimi + 6ay RS + OBV kullanır → yüksek örtüşme, birebir değil.
 - Doğrulama: python tam-eşleşme (count==1 ×4) + `node --check` app script geçti. jsdom sandbox'ta kurulamadı → render'ı kullanıcı hard-refresh ile teyit etmeli.
+
+## v3.8.1 — App HİSSE TARA UI
+- Sekme sırası: **Tümü · Day · Swing · ⏳ Aylık** (Day öne alındı). Aylık emoji kum saati (⏳). Versiyon etiketi v7.5.
+
+## İyileştirme backlog (BUG DEĞİL — ölçümden sonra, kullanıcı onayıyla)
+- **mcpEnrich her trading run'da** (top6 × 3 MCP çağrısı = ~18/run, her 20dk) → günde-1'e throttle veya gist-cache (yük + gecikme azalır). Fail-safe olduğu için bug değil.
+- **position-scan** günde 1 kez 197 günlük mumu YENİDEN çeker (scanAll zaten çekmişti) → izolasyon için bilinçli; istenirse paylaşımlı veriyle optimize edilir.
+- **App AYLIK vs bot position-scan paritesi:** app Stage-2 ÖZÜ (k'den), bot ek MA200-eğimi+6ay RS+OBV. Tam parite istenirse hizalanır.
