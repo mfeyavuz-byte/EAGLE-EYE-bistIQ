@@ -974,3 +974,9 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - **bot/position-scan.mjs:** günlük Stage-2 trend taraması (MA50>MA200, fiyat>MA50, MA200 yükselen, RSI 50-72, ADX≥20, 6 ay RS>0, OBV birikim). Skor + MA50-altı stop referansı.
 - main()'de **günde 1** ayrı Telegram mesajı ("📅 POZİSYON TARAMA"). try/catch izole, `st.lastPosDay` ile tavanlı.
 - **runPaper'a/sinyallere/AI TRADER'a SIFIR etki** (regresyon testi geçiyor). Sadece kullanıcı bilgisi; bot işleme almaz.
+
+## v3.8 — App HİSSE TARA: "Aylık" sekmesi (1-2 ay pozisyon)
+- `standalone/index.html` (scripts[6]) — 4 cerrahi ekleme: sonuç objesine `monthly` (Stage-2 bayrağı: `k.last.ma50>ma200 & close>ma50 & RSI 50-72 & ADX≥20 & higherTrend YUKARI` — geçmiş mum gerekmez, `k`'den), `Re==="month"` filtre dalı, `pm` sayımı, `C("month","🗓 AYLIK",pm)` sekmesi.
+- day/swing **bulma mantığına dokunulmadı**; sadece ayrı sekme eklendi. Tümü/Day/Swing/Aylık.
+- Not: App AYLIK = Stage-2 ÖZÜ (k'den). Bot position-scan.mjs ek olarak MA200-eğimi + 6ay RS + OBV kullanır → yüksek örtüşme, birebir değil.
+- Doğrulama: python tam-eşleşme (count==1 ×4) + `node --check` app script geçti. jsdom sandbox'ta kurulamadı → render'ı kullanıcı hard-refresh ile teyit etmeli.
