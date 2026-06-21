@@ -947,3 +947,8 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - **Piyasa rejimi:** XU100 < MA200 ise DÜŞÜŞ → max poz 5→2, sadece dip kurulumları, risk yarıya (run.mjs main + runPaper `bearRegime`).
 - **ATR risk paritesi:** stop = giriş−2×ATR, hedef = +2R; lot = equity×%1 / stop-mesafesi (bear'de %0.5), tek poz tavanı %30, nakit sınırı. scanOne artık `atr` döndürüyor. Eski sabit %10-30 sizing kaldırıldı.
 - **Kurulum öğrenme:** her poz `setup` (dip/trend/counter) etiketli; kapanışta trade'e yazılır. `disabledSetups`: ≥10 işlemde net-zararlı kurulumu otomatik durdurur. Telegram raporunda kurulum kazanan/toplam + rejim satırı.
+
+## v3.4 — Analitik + çıkış + risk kontrolü (bot/run.mjs)
+- **A Performans:** günlük `equityLog`; `perfStats/perfReport` (beklenti₺/işlem, isabet, PF, max drawdown, Sharpe, kurulum K/Z). `/performans` komutu + günde 1 otomatik Telegram özeti (`lastPerfDay`).
+- **B Çıkış:** ATR chandelier trailing (`tepe−3×ATR`, ATR yoksa %1.5); ölü-para zaman stopu (14 günde |hareket|<%2 → "ZAMAN" ile kapat). Poz açılışta `atr` saklanıyor.
+- **C Risk:** sektör limiti (aynı sektörde max 2 poz, `sectorOf`); likidite tavanı (lot ≤ günlük hacmin %5'i, scanOne `avgVol` döndürüyor).

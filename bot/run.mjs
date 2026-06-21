@@ -98,7 +98,7 @@ async function scanOne(sym) {
   if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;         // yükselen trende karşı SATMA
   if (!isDip && k.final === "AL" && (last.volume || 0) < avgVol * 0.7) return null; // hacim kuruması = teyitsiz AL
   if (!isDip && k.final === "AL" && (last.rsi || 0) >= 63) return null; // aşırı-alımda/geç girişi ele (backtest: erken giriş %42 vs geç %34)
-  return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null,
+  return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol),
            stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend, ret60: +ret60.toFixed(1), rr: (k.target1 && k.stopLoss && last.close > k.stopLoss) ? +((k.target1 - last.close) / (last.close - k.stopLoss)).toFixed(2) : 0 };
 }
 async function scanAll() {
@@ -124,6 +124,37 @@ function disabledSetups(trades) {
   const out = new Set();
   for (const [k, v] of Object.entries(setupStats(trades))) if (v.n >= 10 && v.pnl < 0) out.add(k);
   return out;
+}
+
+// ---------- Performans analitiği (beklenti / drawdown / Sharpe) ----------
+function perfStats(st) {
+  const cl = st.trades || [], n = cl.length;
+  const wins = cl.filter(t => (t.pnl || 0) > 0), losses = cl.filter(t => (t.pnl || 0) <= 0);
+  const sum = a => a.reduce((x, t) => x + (t.pnl || 0), 0);
+  const winR = n ? wins.length / n * 100 : 0;
+  const avgW = wins.length ? sum(wins) / wins.length : 0, avgL = losses.length ? sum(losses) / losses.length : 0;
+  const expc = n ? sum(cl) / n : 0;                                       // işlem başına beklenti (₺)
+  const lossSum = Math.abs(sum(losses));
+  const pf = lossSum > 0 ? sum(wins) / lossSum : (sum(wins) > 0 ? Infinity : 0);
+  const eq = (st.equityLog || []).map(e => e.eq);
+  let peak = -Infinity, maxDD = 0;
+  for (const v of eq) { if (v > peak) peak = v; const dd = peak > 0 ? (peak - v) / peak * 100 : 0; if (dd > maxDD) maxDD = dd; }
+  const rets = []; for (let i = 1; i < eq.length; i++) if (eq[i - 1] > 0) rets.push((eq[i] - eq[i - 1]) / eq[i - 1]);
+  const mean = rets.length ? rets.reduce((a, b) => a + b, 0) / rets.length : 0;
+  const sd = rets.length ? Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / rets.length) : 0;
+  const sharpe = sd > 0 ? mean / sd * Math.sqrt(252) : 0;                 // yıllıklandırılmış (basit)
+  return { n, winR, avgW, avgL, expc, pf, maxDD, sharpe };
+}
+function perfReport(st) {
+  const p = perfStats(st);
+  let m = `📊 PERFORMANS\n${fmtTime()}\n`;
+  m += `\n📈 İşlem: ${p.n} · İsabet: %${p.winR.toFixed(0)}`;
+  m += `\n💰 Beklenti/işlem: ${p.expc >= 0 ? "+" : ""}${Math.round(p.expc)}₺ · PF: ${isFinite(p.pf) ? p.pf.toFixed(2) : "∞"}`;
+  m += `\n📊 Ort. kazanç: +${Math.round(p.avgW)}₺ · ort. kayıp: ${Math.round(p.avgL)}₺`;
+  m += `\n📉 Max drawdown: %${p.maxDD.toFixed(1)} · Sharpe: ${p.sharpe.toFixed(2)}`;
+  const ss = setupStats(st.trades);
+  if (Object.keys(ss).length) m += "\n🧪 Kurulum: " + Object.entries(ss).map(([k, v]) => `${k} ${v.w}/${v.n} (${v.pnl >= 0 ? "+" : ""}${Math.round(v.pnl)}₺)`).join(" · ");
+  return m;
 }
 
 // ---------- AI TRADER (paper trading) ----------
@@ -177,7 +208,8 @@ async function runPaper(signals, xuNow, bearRegime = false) {
     if (pct >= 0.02) { const np = Math.max(ps.peak || 0, cur); if (np > (ps.peak || 0)) ps.peak = np; }
     // BREAKEVEN: +%2'de stop'u girişe çek (kârı koru, başabaşa kilitle)
     if (pct >= 0.02 && (!ps.sl || ps.sl < ps.entry)) ps.sl = ps.entry;
-    const trailLv = ps.peak ? +(ps.peak * 0.985).toFixed(2) : null;
+    const trailLv = ps.peak ? +((ps.atr && ps.atr > 0 ? ps.peak - 3 * ps.atr : ps.peak * 0.985)).toFixed(2) : null;  // ATR chandelier (yoksa %1.5)
+    const daysHeld = ps.date ? Math.round((Date.parse(today) - Date.parse(ps.date)) / 864e5) : 0;
     // KISMİ KÂR: ilk hedefe ulaşınca yarısını sat (bir kez), kalanı trailing'e bırak
     if (!ps.partial && ps.tp && cur >= ps.tp && ps.lot >= 2) {
       const half = Math.floor(ps.lot / 2);
@@ -191,9 +223,10 @@ async function runPaper(signals, xuNow, bearRegime = false) {
     // TAM KAPAMA: stop(breakeven dahil) / trailing / SAT sinyali / (kısmi yapılmadıysa hedef)
     const hitSL = ps.sl && cur <= ps.sl, hitTS = !!trailLv && cur <= trailLv, hitSIG = satSet.has(sym);
     const hitTP = !ps.partial && ps.tp && cur >= ps.tp;
-    if (hitSL || hitTS || hitSIG || hitTP) {
-      const reason = hitSL ? (ps.sl === ps.entry ? "BE" : "SL") : hitTS ? "TS" : hitSIG ? "SIG" : "TP";
-      const label = { SL: "Zarar Durdur", BE: "Başabaş (kâr korundu)", TS: "Trailing Stop", SIG: "SAT sinyali", TP: "Hedef" }[reason];
+    const hitTIME = daysHeld >= 14 && Math.abs(pct) < 0.02;   // ÖLÜ PARA: 14 günde kıpırdamadı → sermayeyi boşalt
+    if (hitSL || hitTS || hitSIG || hitTP || hitTIME) {
+      const reason = hitSL ? (ps.sl === ps.entry ? "BE" : "SL") : hitTS ? "TS" : hitSIG ? "SIG" : hitTP ? "TP" : "ZAMAN";
+      const label = { SL: "Zarar Durdur", BE: "Başabaş (kâr korundu)", TS: "Trailing Stop", SIG: "SAT sinyali", TP: "Hedef", ZAMAN: "Ölü para (zaman stopu)" }[reason];
       const pnl = +((cur - ps.entry) * ps.lot).toFixed(0), pnlPct = +(pct * 100).toFixed(2);
       st.cash += ps.lot * cur;
       st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: ps.lot, pnl, pnlPct, open: ps.date, close: today, reason, setup: ps.setup || "?" });
@@ -217,6 +250,8 @@ async function runPaper(signals, xuNow, bearRegime = false) {
     .sort((a, b) => b._score - a._score);
   for (const sig of candidates) {
     if (Object.keys(st.pos).length >= MAX_POS || !ddOK) break;
+    const sec = sectorOf(sig.sym);                                       // SEKTÖR LİMİTİ: aynı sektörde en fazla 2 poz
+    if (sec && Object.keys(st.pos).filter(s => sectorOf(s) === sec).length >= 2) continue;
     const conf = sig.confidence || 0, j = sig.price, up = upside(sig);
     // ATR-tabanlı stop (2×ATR) + 2R hedef; ATR yoksa %3 stop'a düş (volatiliteye duyarlı).
     const slDist = (sig.atr && sig.atr > 0) ? +(2 * sig.atr).toFixed(2) : +(j * 0.03).toFixed(2);
@@ -225,10 +260,11 @@ async function runPaper(signals, xuNow, bearRegime = false) {
     let Q = slDist > 0 ? Math.floor(equity * RISK_PCT / slDist) : 0;
     if (Q * j > equity * MAXCOST) Q = Math.floor(equity * MAXCOST / j);   // tek-pozisyon tavanı
     if (Q * j > st.cash) Q = Math.floor(st.cash / j);                     // nakit sınırı
+    if (sig.avgVol && Q > sig.avgVol * 0.05) Q = Math.floor(sig.avgVol * 0.05);  // LİKİDİTE: günlük hacmin en fazla %5'i
     if (Q > 0 && sl < j) {
       st.cash -= Q * j;
       const setup = setupOf(sig);
-      st.pos[sig.sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0, setup };
+      st.pos[sig.sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0, setup, atr: (sig.atr && sig.atr > 0) ? sig.atr : null };
       const costPct = Math.round(Q * j / equity * 100);
       opened.push(`📈 ${sig.sym} · ${Q} lot @ ${j}₺ (%${costPct} portföy · ${setup}) · güven %${conf} · potansiyel %${up.toFixed(1)} · stop ${sl} · hedef ${tp}`);
     }
@@ -238,6 +274,12 @@ async function runPaper(signals, xuNow, bearRegime = false) {
   const newDay = st.dayKey !== today;
   if (newDay) st.dayStart = equity;        // yeni gün: günlük drawdown referansını sıfırla
   st.dayKey = today;
+  // Günlük equity logu (performans/analitik) — gün başına 1 nokta
+  const eqEnd = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * ((scanMap[s]?.price) || p.last || p.entry), 0);
+  st.equityLog = st.equityLog || [];
+  if (!st.equityLog.length || st.equityLog[st.equityLog.length - 1].d !== today) st.equityLog.push({ d: today, eq: Math.round(eqEnd) });
+  else st.equityLog[st.equityLog.length - 1].eq = Math.round(eqEnd);
+  st.equityLog = st.equityLog.slice(-260);
   st.trades = st.trades.slice(0, 300);
   // Aç/kapat'ları saatlik rapora kadar biriktir (her run anlık mesaj atmaz, saat başı rapor eder)
   st.hourOpens = (st.hourOpens || []).concat(opened);
@@ -277,6 +319,8 @@ async function handleCommands(st) {
     if (String(u.message?.chat?.id) !== String(TG_CHAT)) continue;
     if (txt === "/durum" || txt === "/pozisyonlar" || txt === "/start") {
       await sendTG(buildStatus(st)); replied++; await sleep(300);
+    } else if (txt === "/performans" || txt === "/perf") {
+      await sendTG(perfReport(st)); replied++; await sleep(300);
     }
   }
   st.tgOffset = off;
@@ -401,6 +445,8 @@ async function main() {
       const ss = setupStats(st.trades);
       if (Object.keys(ss).length) m2 += "\n🧪 Kurulum (kazanan/toplam): " + Object.entries(ss).map(([k, v]) => `${k} ${v.w}/${v.n}${v.pnl ? ` (${v.pnl >= 0 ? "+" : ""}${Math.round(v.pnl)}₺)` : ""}`).join(" · ");
       await sendTG(m2); sent++; await sleep(400);
+      // Günde 1 kez performans özeti (beklenti/drawdown/Sharpe/kurulum)
+      if (st.lastPerfDay !== st.dayKey && (st.trades || []).length) { await sendTG(perfReport(st)); sent++; st.lastPerfDay = st.dayKey; await sleep(400); }
       // raporu kaydet: bu saati işaretle, saatlik birikimi sıfırla
       st.lastReportHour = istHour; st.hourOpens = []; st.hourCloses = [];
       await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
