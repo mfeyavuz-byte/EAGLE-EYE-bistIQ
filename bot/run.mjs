@@ -329,7 +329,9 @@ async function runPaper(signals, xuNow, bearRegime = false) {
   else st.equityLog[st.equityLog.length - 1].eq = Math.round(eqEnd);
   st.equityLog = st.equityLog.slice(-260);
   st.trades = st.trades.slice(0, 300);
-  // Aç/kapat'ları saatlik rapora kadar biriktir (her run anlık mesaj atmaz, saat başı rapor eder)
+  // YENİ POZİSYON açıldıysa saatlik raporu BEKLEMEDEN hemen bildir (kapanış + saatlik özet aynen devam)
+  if (opened.length) { try { await sendTG(`🆕 AI TRADER — yeni işlem · ${fmtTime()}\n` + opened.join("\n")); } catch {} }
+  // Aç/kapat'ları saatlik özete de biriktir (saat başı rapor olduğu gibi sürer)
   st.hourOpens = (st.hourOpens || []).concat(opened);
   st.hourCloses = (st.hourCloses || []).concat(closed);
   await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
