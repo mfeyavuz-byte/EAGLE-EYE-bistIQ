@@ -8,6 +8,7 @@ import { getSignals, enrichData, getHigherTrend } from "./engine.mjs";
 import { fetchDaily, fetchWeekly, fetchIndexClose } from "./data.mjs";
 import { mcpCall } from "./mcp.mjs";
 import { grokXSentiment, geminiAdvise, grokEnabled, geminiEnabled } from "./llm.mjs";
+import { positionScan } from "./position-scan.mjs";
 import { fetchNews } from "./news.mjs";
 import syms from "./symbols.json" with { type: "json" };
 import SECTORS from "./sectors.json" with { type: "json" };
@@ -529,6 +530,19 @@ async function main() {
         if (advice) { await sendTG(`🤖 GÜNLÜK AI YORUM (Gemini${grokNote ? "+Grok" : ""})\n${advice}`); sent++; await sleep(400); }
       }
       // raporu kaydet: bu saati işaretle, saatlik birikimi sıfırla
+      // POZİSYON TARAMA (1-2 ay · Stage-2) — SADECE BİLGİ, AI TRADER'a/işlemlere ETKİSİ YOK; günde 1
+      if (st.lastPosDay !== st.dayKey) {
+        st.lastPosDay = st.dayKey;   // başarısız olsa da bugün tekrar deneme (197 fetch → tek/gün)
+        try {
+          const pos = await positionScan(syms, idxRows);
+          if (pos.length) {
+            let mp = `📅 POZİSYON TARAMA (1-2 ay · Stage-2)\n${fmtTime()}\n\n`
+              + pos.slice(0, 12).map(p => `${p.sym} @${p.price}₺ · skor ${p.score} · RS6a ${p.rs >= 0 ? "+" : ""}${p.rs} · ADX ${p.adx} · RSI ${p.rsi}${p.obvUp ? " · OBV↑" : ""} · stop ${p.stop}`).join("\n");
+            mp += `\n\n⚠ Sadece bilgi · AI TRADER bunları İŞLEME ALMAZ.`;
+            await sendTG(mp); sent++; await sleep(400);
+          }
+        } catch (e) { console.error("Pozisyon tarama:", e.message); }
+      }
       st.lastReportHour = istHour; st.hourOpens = []; st.hourCloses = [];
       await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
       console.log(`Rapor gönderildi · değer ~${Math.round(eq)}₺ · getiri ${portRet.toFixed(2)}% · poz ${openLines.length}`);

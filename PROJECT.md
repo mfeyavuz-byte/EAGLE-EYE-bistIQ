@@ -969,3 +969,8 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - **Günlük AI yorum** → Gemini sentezi (+top aday için Grok/X), günde 1, `st.lastLlmDay` ile tavanlanır; sadece `GEMINI_API_KEY` varsa.
 - **cf-worker.js:** ENDEKS TARA için Cloudflare Worker (MCP'ye CORS proxy). Kullanıcı deploy eder → URL doğrulanır → app'te tek satır URL değişir (app henüz değişmedi).
 - Doğrulama: node --check, LLM fail-safe (anahtarsız 5ms null), Grok/Gemini parse testi, runPaper regresyon — hepsi geçti.
+
+## v3.7 — Pozisyon taraması (1-2 ay, sadece bilgi)
+- **bot/position-scan.mjs:** günlük Stage-2 trend taraması (MA50>MA200, fiyat>MA50, MA200 yükselen, RSI 50-72, ADX≥20, 6 ay RS>0, OBV birikim). Skor + MA50-altı stop referansı.
+- main()'de **günde 1** ayrı Telegram mesajı ("📅 POZİSYON TARAMA"). try/catch izole, `st.lastPosDay` ile tavanlı.
+- **runPaper'a/sinyallere/AI TRADER'a SIFIR etki** (regresyon testi geçiyor). Sadece kullanıcı bilgisi; bot işleme almaz.
