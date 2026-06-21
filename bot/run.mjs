@@ -11,6 +11,7 @@ import { fetchNews } from "./news.mjs";
 import syms from "./symbols.json" with { type: "json" };
 import SECTORS from "./sectors.json" with { type: "json" };
 import { analyzeNewsImpact } from "./news-impact.mjs";
+import { pathToFileURL } from "node:url";
 
 const TG_TOKEN = process.env.TG_TOKEN || "";
 const TG_CHAT  = process.env.TG_CHAT  || "";
@@ -197,9 +198,9 @@ async function currentPrice(sym, scanMap) {
   return d.length ? d[d.length - 1].close : null;
 }
 
-async function runPaper(signals, xuNow, bearRegime = false) {
+async function runPaper(signals, xuNow, bearRegime = false, _test = null) {
   const today = new Date().toISOString().slice(0, 10);
-  let st = await gistGet(PAPER_FILE, null);
+  let st = _test && "state" in _test ? _test.state : await gistGet(PAPER_FILE, null);
   // KRİTİK: Gist okunamadıysa (geçici hata) state'i BİLMİYORUZ → bu run'ı ATLA, ASLA sıfırlama/yazma.
   if (st === READ_FAILED) {
     console.log("⚠ Gist okunamadı (geçici) — AI TRADER bu run atlandı, portföy KORUNDU (sıfırlama YOK).");
@@ -227,7 +228,7 @@ async function runPaper(signals, xuNow, bearRegime = false) {
 
   // Pozisyon yönetiminin TAMAMI (alım + satım) sadece BIST seansında: hafta içi 09:55–18:05.
   // Açılış (09:55) dahil → gece verilen kararlar sabah açılışta uygulanır.
-  const trading = isTradingHours();
+  const trading = _test && "forceTrading" in _test ? _test.forceTrading : isTradingHours();
   if (!trading) {
     console.log("⏰ Piyasa dışı — pozisyon yönetimi yok (ne alım ne satım).");
   } else {
@@ -510,8 +511,13 @@ async function main() {
 
   console.log(`${sent} Telegram mesajı gönderildi. Toplam ${((Date.now() - t0) / 1e3).toFixed(1)}s`);
 }
-main().catch(async e => {
-  console.error("FATAL:", e);
-  try { await sendTG("⚠ EAGLE EYE bot HATASI: " + (e?.message || e)); } catch {}
-  process.exit(1);
-});
+// Doğrudan çalıştırınca tetikle; import edilince (test harness) tetikleme.
+const _entry = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (import.meta.url === _entry) {
+  main().catch(async e => {
+    console.error("FATAL:", e);
+    try { await sendTG("⚠ EAGLE EYE bot HATASI: " + (e?.message || e)); } catch {}
+    process.exit(1);
+  });
+}
+export { runPaper, perfStats, setupStats, disabledSetups, riskMult, setupOf };

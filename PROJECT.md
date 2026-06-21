@@ -959,3 +959,6 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - **3 Pyramiding:** kazanan (+%4) + hâlâ AL pozisyona BİR kez yarım tranş ekleme, ağırlıklı ortalama giriş + stop yukarı (`ps.pyr`).
 - **4 Haftalık backtest:** `.github/workflows/backtest.yml` (Pazar) → backtest.mjs çalışır, sonuç Telegram'a.
 - **5 Güvenilirlik:** Yahoo `query1` başarısızsa `query2`'ye düşer (data.mjs). Gap dolumu zaten gerçekçi (kapanış canlı fiyattan, stop fiyatından değil).
+
+## Test: runPaper entegrasyon testi
+`node bot/runpaper.test.mjs` — ağsız, mock state + sentetik sinyallerle runPaper'ı baştan sona yürütür (SL kapama, zaman-stopu, pyramiding, açma+ATR risk paritesi, bear rejim, kurulum öğrenme). Test seam'leri: runPaper'ın 4. argümanı `_test={state,forceTrading}` (üretimde verilmez → davranış aynı). main() yalnız doğrudan çalıştırmada tetiklenir (import'ta değil).
