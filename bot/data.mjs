@@ -4,22 +4,25 @@
 const UA={'User-Agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'};
 
 async function yfetch(sym, interval, range, timeout=8000){
-  const u=`https://query1.finance.yahoo.com/v8/finance/chart/${sym}.IS?interval=${interval}&range=${range}&includePrePost=false`;
-  const ctrl=new AbortController(), tid=setTimeout(()=>ctrl.abort(), timeout);
-  try{
-    const r=await fetch(u,{headers:UA,signal:ctrl.signal});
-    clearTimeout(tid);
-    if(!r.ok)return [];
-    const j=await r.json();
-    const n=j?.chart?.result?.[0];
-    if(!n?.timestamp?.length)return [];
-    const q=n.indicators.quote[0], rows=[];
-    n.timestamp.forEach((S,D)=>{
-      if(q.close[D]==null)return;
-      rows.push({ts:S*1e3,date:'',close:+(+q.close[D]).toFixed(2),open:+(+(q.open[D]??q.close[D])).toFixed(2),high:+(+(q.high[D]??q.close[D])).toFixed(2),low:+(+(q.low[D]??q.close[D])).toFixed(2),volume:q.volume[D]??0});
-    });
-    return rows;
-  }catch(e){ clearTimeout(tid); return []; }
+  for(const host of ['query1','query2']){                 // query1 başarısızsa query2'ye düş (güvenilirlik)
+    const u=`https://${host}.finance.yahoo.com/v8/finance/chart/${sym}.IS?interval=${interval}&range=${range}&includePrePost=false`;
+    const ctrl=new AbortController(), tid=setTimeout(()=>ctrl.abort(), timeout);
+    try{
+      const r=await fetch(u,{headers:UA,signal:ctrl.signal});
+      clearTimeout(tid);
+      if(!r.ok)continue;
+      const j=await r.json();
+      const n=j?.chart?.result?.[0];
+      if(!n?.timestamp?.length)continue;
+      const q=n.indicators.quote[0], rows=[];
+      n.timestamp.forEach((S,D)=>{
+        if(q.close[D]==null)return;
+        rows.push({ts:S*1e3,date:'',close:+(+q.close[D]).toFixed(2),open:+(+(q.open[D]??q.close[D])).toFixed(2),high:+(+(q.high[D]??q.close[D])).toFixed(2),low:+(+(q.low[D]??q.close[D])).toFixed(2),volume:q.volume[D]??0});
+      });
+      return rows;
+    }catch(e){ clearTimeout(tid); continue; }
+  }
+  return [];
 }
 export const fetch15m = sym => yfetch(sym,'15m','5d');     // (kullanımdan kalktı, dursun)
 export const fetchDaily = sym => yfetch(sym,'1d','2y');    // sinyal: ~500 günlük mum → MA200 geçerli

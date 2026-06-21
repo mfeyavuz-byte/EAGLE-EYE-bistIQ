@@ -1,0 +1,32 @@
+name: Haftalık Backtest
+
+# Haftada bir geçmiş veride sinyal motorunu test eder, sonucu Telegram'a yollar.
+# (Setup öğrenme/eşiklerin son pencerede hâlâ geçerli olduğunu doğrular.)
+on:
+  schedule:
+    - cron: "0 6 * * 0"   # Pazar ~09:00 İstanbul
+  workflow_dispatch:
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Backtest çalıştır + Telegram'a gönder
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT: ${{ secrets.TG_CHAT }}
+        run: |
+          set +e
+          OUT=$(node bot/backtest.mjs 2>&1)
+          echo "$OUT"
+          if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+            MSG=$(printf '📐 HAFTALIK BACKTEST\n%s' "$OUT")
+            curl -s "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${TG_CHAT}" \
+              --data-urlencode "text=${MSG}" > /dev/null
+          fi

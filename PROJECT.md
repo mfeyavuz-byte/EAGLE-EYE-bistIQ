@@ -952,3 +952,10 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - **A Performans:** günlük `equityLog`; `perfStats/perfReport` (beklenti₺/işlem, isabet, PF, max drawdown, Sharpe, kurulum K/Z). `/performans` komutu + günde 1 otomatik Telegram özeti (`lastPerfDay`).
 - **B Çıkış:** ATR chandelier trailing (`tepe−3×ATR`, ATR yoksa %1.5); ölü-para zaman stopu (14 günde |hareket|<%2 → "ZAMAN" ile kapat). Poz açılışta `atr` saklanıyor.
 - **C Risk:** sektör limiti (aynı sektörde max 2 poz, `sectorOf`); likidite tavanı (lot ≤ günlük hacmin %5'i, scanOne `avgVol` döndürüyor).
+
+## v3.5 — MCP olay/analist + kural-tabanlı yönetici + pyramiding + backtest + fallback
+- **1 MCP katmanı (bot/mcp.mjs, sunucu-tarafı → CORS yok):** en güçlü 6 AL adayı için `get_earnings` (≤3 gün bilanço → blackout), `get_analyst_data` (konsensüs → güven ±, weakFund), `get_financial_ratios` (PE≤0 → ele). Hepsi fail-safe (null'da nötr). market="bist".
+- **2 Kural-tabanlı portföy yöneticisi (anahtarsız):** `riskMult` — kurulumun gerçek beklentisine göre risk ×0.6–1.3 (≥5 işlem). Açılış mesajında "↳ gerekçe" satırı.
+- **3 Pyramiding:** kazanan (+%4) + hâlâ AL pozisyona BİR kez yarım tranş ekleme, ağırlıklı ortalama giriş + stop yukarı (`ps.pyr`).
+- **4 Haftalık backtest:** `.github/workflows/backtest.yml` (Pazar) → backtest.mjs çalışır, sonuç Telegram'a.
+- **5 Güvenilirlik:** Yahoo `query1` başarısızsa `query2`'ye düşer (data.mjs). Gap dolumu zaten gerçekçi (kapanış canlı fiyattan, stop fiyatından değil).
