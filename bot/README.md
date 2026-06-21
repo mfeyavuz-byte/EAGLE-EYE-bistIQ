@@ -70,3 +70,15 @@ GitHub'ın kendi cron'u tetikleri atlayabilir. Self-loop bunu büyük ölçüde 
 
 ## Başlangıç sermayesi
 Varsayılan **500.000₺**. Değiştirmek için workflow env'e `START_CASH: "1000000"` ekle. Sıfırlamak için Gist'teki `feybot_paper.json`'u `{}` yap.
+
+## 🤖 LLM katmanı (opsiyonel — Grok + Gemini)
+Anahtar yoksa sessizce atlanır; bot anahtarsız tam çalışır. Eklemek için Secrets:
+
+| Secret | Ne için |
+|---|---|
+| `GEMINI_API_KEY` | Günlük AI yorum (Gemini sentezi). aistudio.google.com → ücretsiz key |
+| `XAI_API_KEY` | `/yorum SEMBOL` → Grok'un X/Twitter gönderilerine göre duyarlılık yorumu. console.x.ai |
+| `XAI_MODEL` / `GEMINI_MODEL` | (ops.) model override; varsayılan `grok-4` / `gemini-2.0-flash` |
+
+- **`/yorum ASELS`** → Grok, X'te son gönderileri canlı tarayıp duyarlılık + kısa yorum döndürür (istek üzerine; maliyet sadece sorunca).
+- **Günlük AI yorum** → Gemini, portföy + adaylar + rejim + (Grok/X duyarlılığı) sentezini günde 1 Telegram'a yazar.

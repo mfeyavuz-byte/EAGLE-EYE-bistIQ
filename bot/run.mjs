@@ -7,6 +7,7 @@
 import { getSignals, enrichData, getHigherTrend } from "./engine.mjs";
 import { fetchDaily, fetchWeekly, fetchIndexClose } from "./data.mjs";
 import { mcpCall } from "./mcp.mjs";
+import { grokXSentiment, geminiAdvise, grokEnabled, geminiEnabled } from "./llm.mjs";
 import { fetchNews } from "./news.mjs";
 import syms from "./symbols.json" with { type: "json" };
 import SECTORS from "./sectors.json" with { type: "json" };
@@ -366,12 +367,25 @@ async function handleCommands(st) {
   let off = st.tgOffset || 0, replied = 0;
   for (const u of updates) {
     off = u.update_id + 1;
-    const txt = (u.message?.text || "").trim().toLowerCase().split("@")[0];
+    const raw = (u.message?.text || "").trim();
+    const txt = raw.toLowerCase().split("@")[0];
     if (String(u.message?.chat?.id) !== String(TG_CHAT)) continue;
     if (txt === "/durum" || txt === "/pozisyonlar" || txt === "/start") {
       await sendTG(buildStatus(st)); replied++; await sleep(300);
     } else if (txt === "/performans" || txt === "/perf") {
       await sendTG(perfReport(st)); replied++; await sleep(300);
+    } else if (txt.startsWith("/yorum")) {
+      // Grok + X (Twitter) duyarlılığı — istek üzerine: /yorum ASELS
+      const sym = (raw.split(/\s+/)[1] || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (!sym) await sendTG("Kullanım: /yorum SEMBOL  (örn. /yorum ASELS)");
+      else if (!grokEnabled()) await sendTG(`🐦 ${sym}: Grok/X yorumu için XAI_API_KEY secret'ı gerekli.`);
+      else {
+        await sendTG(`🐦 ${sym} için X gönderileri Grok ile inceleniyor…`);
+        const g = await grokXSentiment(sym);
+        if (!g) await sendTG(`🐦 ${sym}: Grok/X yorumu alınamadı (geçici sorun).`);
+        else await sendTG(`🐦 ${sym} — X duyarlılığı: ${g.label} (${g.score >= 0 ? "+" : ""}${g.score})\n${g.ozet}${g.uyari ? "\n⚠ " + g.uyari : ""}`);
+      }
+      replied++; await sleep(300);
     }
   }
   st.tgOffset = off;
@@ -500,6 +514,20 @@ async function main() {
       await sendTG(m2); sent++; await sleep(400);
       // Günde 1 kez performans özeti (beklenti/drawdown/Sharpe/kurulum)
       if (st.lastPerfDay !== st.dayKey && (st.trades || []).length) { await sendTG(perfReport(st)); sent++; st.lastPerfDay = st.dayKey; await sleep(400); }
+      // GÜNLÜK AI YORUM — Gemini sentezi + Grok/X duyarlılığı (günde 1; anahtar yoksa atlanır; maliyet tavanı)
+      if (geminiEnabled() && st.lastLlmDay !== st.dayKey) {
+        st.lastLlmDay = st.dayKey;   // başarısız olsa da bugün tekrar deneme (Grok+Gemini en fazla 1/gün)
+        const top = signals.filter(s => s.signal === "AL").slice(0, 5);
+        let grokNote = "";
+        if (grokEnabled() && top[0]) { const g = await grokXSentiment(top[0].sym); if (g) grokNote = `\nGrok/X (${top[0].sym}): ${g.label} — ${g.ozet}`; }
+        const ctx = `Borsa İstanbul AI TRADER günlük durum. Kısa (en çok 5 cümle), Türkçe, nesnel yorum yap: öne çıkanlar, riskler, rejim.\n`
+          + `Rejim: ${bearRegime ? "DÜŞÜŞ (savunma)" : "NORMAL"}.\n`
+          + `Açık pozisyonlar: ${Object.entries(st.pos).map(([s, p]) => `${s} ${p.lot}@${p.entry}`).join(", ") || "yok"}.\n`
+          + `En güçlü AL adayları: ${top.map(s => `${s.sym}(güven%${s.confidence}, R:R ${s.rr || "?"}${s.analyst ? ", analist " + s.analyst : ""})`).join(", ") || "yok"}.\n`
+          + `Kurulum performansı: ${Object.entries(setupStats(st.trades)).map(([k, v]) => `${k} ${v.w}/${v.n}`).join(", ") || "veri yok"}.` + grokNote;
+        const advice = await geminiAdvise(ctx);
+        if (advice) { await sendTG(`🤖 GÜNLÜK AI YORUM (Gemini${grokNote ? "+Grok" : ""})\n${advice}`); sent++; await sleep(400); }
+      }
       // raporu kaydet: bu saati işaretle, saatlik birikimi sıfırla
       st.lastReportHour = istHour; st.hourOpens = []; st.hourCloses = [];
       await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });

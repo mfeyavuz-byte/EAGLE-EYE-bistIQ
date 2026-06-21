@@ -962,3 +962,10 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 
 ## Test: runPaper entegrasyon testi
 `node bot/runpaper.test.mjs` — ağsız, mock state + sentetik sinyallerle runPaper'ı baştan sona yürütür (SL kapama, zaman-stopu, pyramiding, açma+ATR risk paritesi, bear rejim, kurulum öğrenme). Test seam'leri: runPaper'ın 4. argümanı `_test={state,forceTrading}` (üretimde verilmez → davranış aynı). main() yalnız doğrudan çalıştırmada tetiklenir (import'ta değil).
+
+## v3.6 — LLM katmanı (Grok + Gemini) + ENDEKS TARA CORS proxy
+- **bot/llm.mjs:** `grokXSentiment` (xAI, X canlı arama → hisse duyarlılığı JSON), `geminiAdvise` (Gemini metin). Hepsi fail-safe (anahtar yok/hata → null). Anahtarlar: `XAI_API_KEY`, `GEMINI_API_KEY` (ops. `XAI_MODEL`/`GEMINI_MODEL`).
+- **Telegram `/yorum SEMBOL`** → Grok X duyarlılığı (istek üzerine, maliyet kontrollü).
+- **Günlük AI yorum** → Gemini sentezi (+top aday için Grok/X), günde 1, `st.lastLlmDay` ile tavanlanır; sadece `GEMINI_API_KEY` varsa.
+- **cf-worker.js:** ENDEKS TARA için Cloudflare Worker (MCP'ye CORS proxy). Kullanıcı deploy eder → URL doğrulanır → app'te tek satır URL değişir (app henüz değişmedi).
+- Doğrulama: node --check, LLM fail-safe (anahtarsız 5ms null), Grok/Gemini parse testi, runPaper regresyon — hepsi geçti.
