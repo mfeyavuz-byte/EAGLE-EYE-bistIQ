@@ -994,3 +994,7 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - Aylık = `y.monthly` (Stage-2 bayrağı, v3.8). Diğer = day/swing/monthly dışı AL (hiç hisse kaybolmaz). swing+monthly hisse her iki bölümde de görünür (app sekmeleriyle tutarlı).
 - Sadece PDF document.write metni değişti — React render ağacına dokunulmadı. node --check geçti.
 
+
+## v4.1 — Haber akışı fix (bot→gist→app, deploy gerekmez)
+- App haber fallback'i artık `localStorage feybot_gistid` boşsa **gömülü DEFAULT_GIST**'e düşüyor. Bot her run `eagle_news.json` yazıyor; proxy'ler çökse de app gist'ten okur (api.github.com CORS-ok). SENKRON gerekmez.
+- ENDEKS TARA: interaktif MCP tool-runner (kullanıcı tool+arg seçiyor) → bot pre-compute edemez. MCP'de browser CORS yok, proxy'ler POST+SSE taşımıyor → **tek çözüm Cloudflare Worker** (browser→worker→MCP) ya da ENDEKS TARA'yı bot-gist veri görüntüleyiciye dönüştürmek.
