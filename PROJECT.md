@@ -993,3 +993,7 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - HİSSE TARA PDF'i (React, `#... 📄 PDF`) artık AL sinyallerini **⚡ Day · 📈 Swing · ⏳ Aylık · 📋 Diğer** alt-tablolarına ayırıyor (+ 📉 SAT korunur). `sec(t,a)` helper + `TH` ile tablo markup tekrarsız.
 - Aylık = `y.monthly` (Stage-2 bayrağı, v3.8). Diğer = day/swing/monthly dışı AL (hiç hisse kaybolmaz). swing+monthly hisse her iki bölümde de görünür (app sekmeleriyle tutarlı).
 - Sadece PDF document.write metni değişti — React render ağacına dokunulmadı. node --check geçti.
+
+## v4.0 — App AI TRADER: equity eğrisi + günlük/haftalık/aylık getiri
+- `index.html` AI TRADER bölümüne eklendi: `Se.equityLog`'tan (bot v3.4'ten beri gist'e yazıyor) **gün-gün SVG equity eğrisi** + **Günlük/Haftalık/Aylık getiri** stat kutuları (1/5/22 işlem günü).
+- <2 gün veri varsa "veri birikiyor" mesajı (çökmez). Pür SVG polyline (Recharts'a bağımlı değil), b()/T/Se scope'tan. Trade/scan/render mantığına dokunulmadı; node --check geçti.
