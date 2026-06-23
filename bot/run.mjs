@@ -162,6 +162,18 @@ async function mcpEnrich(cands) {
   }
 }
 
+// ENDEKS TARA — bot, scan_stocks'u 5 endeks için sunucu-tarafı çalıştırır (CORS yok) → eagle_index.json'a yazılır, app okur.
+const IDX_LIST = ["XU100", "XU030", "XUSIN", "XUMAL", "XUHIZ"];
+async function scanIndices() {
+  const indices = {};
+  for (const ix of IDX_LIST) {
+    const r = await mcpCall("scan_stocks", { index: ix, timeframe: "1d", condition: "close > 0" }, 20000).catch(() => null);
+    const arr = (r && Array.isArray(r.stocks)) ? r.stocks : [];
+    indices[ix] = arr.map(s => ({ sym: s.symbol, name: s.name || s.symbol, close: +(+s.close || 0).toFixed(2), chg: +(+s.change || 0).toFixed(2), vol: s.volume || 0 }));
+  }
+  return { ts: Date.now(), indices };
+}
+
 // ---------- Performans analitiği (beklenti / drawdown / Sharpe) ----------
 function perfStats(st) {
   const cl = st.trades || [], n = cl.length;
@@ -542,6 +554,15 @@ async function main() {
             await sendTG(mp); sent++; await sleep(400);
           }
         } catch (e) { console.error("Pozisyon tarama:", e.message); }
+      }
+      // ENDEKS TARA — günde 1, 5 endeksi MCP'den tara → eagle_index.json'a yaz (app gist'ten okur, CORS yok)
+      if (st.lastIdxDay !== st.dayKey) {
+        st.lastIdxDay = st.dayKey;
+        try {
+          const ix = await scanIndices();
+          await gistPut({ "eagle_index.json": { content: JSON.stringify(ix) } });
+          console.log(`Endeks taraması yazıldı (${Object.keys(ix.indices).length} endeks)`);
+        } catch (e) { console.error("Endeks tarama:", e.message); }
       }
       st.lastReportHour = istHour; st.hourOpens = []; st.hourCloses = [];
       await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
