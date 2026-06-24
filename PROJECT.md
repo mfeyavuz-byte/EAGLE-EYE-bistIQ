@@ -1011,3 +1011,8 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - Tanı: fix canlıdaydı + gist'te 80 taze haber vardı, ama `if(C.length<5)` kapısı proxy'ler ≥5 bayat haber döndürünce gist'i HİÇ okumuyordu.
 - Fix: `if(C.length<5)`→`if(1)` — gist `eagle_news.json` (bot her run yazar, 80 haber) HER ZAMAN yüklenir; dedup+sort halleder. Proxy'lere bağımlı değil.
 - SW cache v106→v107 (eski cache temizlensin, tarayıcı taze app çeksin).
+
+## v4.4 — HABER KÖK SEBEP (kanıtlı): bayat token → 401
+- **Asıl bug:** app, gist haberini okurken localStorage'daki `feybot_ghtoken`'ı Authorization header'a koyuyordu. SENKRON denemelerinden kalan GEÇERSİZ token → GitHub **HTTP 401** → `_r.ok` false → haber YOK. (Portföy tokensız okuduğu için hep çalıştı; haber token gönderdiği için hiç çalışmadı — asimetri buydu.)
+- **Kanıt:** bayat token ile gist GET=401, tokensız=200.
+- **Fix:** haber gist okuması artık TOKENSIZ (`_hd={}`). Secret gist ID ile tokensız okunur. + v4.3 if(1) hep yükler + SW v107.
