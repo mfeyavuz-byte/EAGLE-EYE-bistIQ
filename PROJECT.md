@@ -1016,3 +1016,7 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - **Asıl bug:** app, gist haberini okurken localStorage'daki `feybot_ghtoken`'ı Authorization header'a koyuyordu. SENKRON denemelerinden kalan GEÇERSİZ token → GitHub **HTTP 401** → `_r.ok` false → haber YOK. (Portföy tokensız okuduğu için hep çalıştı; haber token gönderdiği için hiç çalışmadı — asimetri buydu.)
 - **Kanıt:** bayat token ile gist GET=401, tokensız=200.
 - **Fix:** haber gist okuması artık TOKENSIZ (`_hd={}`). Secret gist ID ile tokensız okunur. + v4.3 if(1) hep yükler + SW v107.
+
+## v4.5 — Haber sağlamlaştırma
+- dedup `C.title.toLowerCase()` → `(C.title||"")...`: title'sız proxy haberi artık tüm render'ı çökertmez (try/catch dışıydı).
+- `analyzeNewsImpact(x.title||"",...)`: null title koruması.
