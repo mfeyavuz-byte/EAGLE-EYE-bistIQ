@@ -1029,3 +1029,12 @@ Tüm zincir garanti: 1) boş-cache anında çek, 2) gist hep yükle if(1), 3) to
 - SENKRON metni `"Gist ID: <id>"` → `"Gist bağlı ✓"` (ID görünmez).
 - SENKRON gist input → `type:"password"` (değer maskeli). `defaultValue`/localStorage korunur.
 - `DEFAULT_GIST` kodda aynen duruyor → okuma/çalışma etkilenmez. Sadece ekranda görünmüyor.
+
+## v5.0 — Algoritmik katman (bot AI TRADER seçimi + scanOne)
+5 özellik, hepsi run.mjs (regresyon geçti):
+1. **Breadth rejimi:** AL/(AL+SAT) <%40 → `defensive` (max poz 2, sadece dip, yarı risk).
+2. **Kesitsel momentum:** _score'da rs ağırlığı 0.5→0.8 + ret60×0.3 (göreli güç tilt).
+3. **Vol-targeting:** XU100 20g realize vol → `volScale` (hedef yıllık %20), RISK_PCT × volScale (0.5–1.3 clamp).
+4. **Bayes kurulum-edge:** riskMult artık Beta-Binomial shrinkage `(w+4)/(n+8)` (küçük örnek %50'ye çekilir); eşik n≥3.
+5. **Trendlilik (Kaufman ER):** scanOne `er` döndürür; _score'a +er×8 (trend hisseyi öne al, choppy'i geri).
+- NOT: App HİSSE TARA (index.html ayrı motor) port'u token limiti nedeniyle yapılmadı — bot scanOne (= bot HİSSE TARA raporu) tüm bunları içeriyor. App port'u kalan iş.

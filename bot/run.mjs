@@ -90,6 +90,7 @@ async function scanOne(sym) {
   // Likidite: günlük ortalama işlem hacmi (son 20 gün) × fiyat < 5M TL ise ele
   const avgVol = daily.slice(-20).reduce((a, b) => a + (b.volume || 0), 0) / Math.min(20, daily.length);
   if (avgVol * last.close < 5e6) return null;
+  const _cl = daily.slice(-21).map(b => b.close); const _er = _cl.length > 1 ? +(Math.abs(_cl[_cl.length - 1] - _cl[0]) / (_cl.reduce((a, c, k) => k ? a + Math.abs(c - _cl[k - 1]) : 0, 0) || 1)).toFixed(2) : 0;
   const weekly = await fetchWeekly(sym);                               // ÜST TREND = haftalık
   const k = getSignals(ed, getHigherTrend(weekly), weekly);
   if (!k || k.final === "NÖTR") return null;
@@ -102,7 +103,7 @@ async function scanOne(sym) {
   if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;         // yükselen trende karşı SATMA
   if (!isDip && k.final === "AL" && (last.volume || 0) < avgVol * 0.7) return null; // hacim kuruması = teyitsiz AL
   if (!isDip && k.final === "AL" && (last.rsi || 0) >= 63) return null; // aşırı-alımda/geç girişi ele (backtest: erken giriş %42 vs geç %34)
-  return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol),
+  return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol), er: _er,
            stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend, ret60: +ret60.toFixed(1), rr: (k.target1 && k.stopLoss && last.close > k.stopLoss) ? +((k.target1 - last.close) / (last.close - k.stopLoss)).toFixed(2) : 0 };
 }
 async function scanAll() {
@@ -133,9 +134,9 @@ function disabledSetups(trades) {
 // PORTFÖY YÖNETİCİSİ (anahtarsız, kural-tabanlı): kurulumun GERÇEK beklentisine göre risk çarpanı
 function riskMult(setup, st) {
   const s = setupStats(st.trades)[setup];
-  if (!s || s.n < 5) return 1;            // yeterli kanıt yok → nötr
-  const exp = s.pnl / s.n;                // işlem başına beklenti (₺)
-  return exp > 0 ? 1.3 : exp < 0 ? 0.6 : 1;
+  if (!s || s.n < 3) return 1;            // yeterli kanıt yok → nötr
+  const wr = (s.w + 4) / (s.n + 8);       // Bayes (Beta 4,4): küçük örneği %50e shrink
+  return wr > 0.55 ? 1.3 : wr < 0.45 ? 0.6 : 1;
 }
 
 // MCP olay/analist/temel katmanı (sunucu-tarafı; yalnız en güçlü adaylar — hız + fail-safe).
@@ -212,7 +213,7 @@ async function currentPrice(sym, scanMap) {
   return d.length ? d[d.length - 1].close : null;
 }
 
-async function runPaper(signals, xuNow, bearRegime = false, _test = null) {
+async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = {}) {
   const today = new Date().toISOString().slice(0, 10);
   let st = _test && "state" in _test ? _test.state : await gistGet(PAPER_FILE, null);
   // KRİTİK: Gist okunamadıysa (geçici hata) state'i BİLMİYORUZ → bu run'ı ATLA, ASLA sıfırlama/yazma.
@@ -298,16 +299,17 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null) {
 
   // --- AÇMA: ATR-tabanlı risk + piyasa rejimi + kurulum öğrenme ---
   // Seçim: güven+potansiyel+R:R+RS+sektör+dip. Boyut: işlem başına SABİT %risk (lot = risk / ATR-stop mesafesi).
-  const MAX_POS = bearRegime ? 2 : 5;                 // düşüş rejiminde daha az pozisyon
-  const RISK_PCT = 0.01 * (bearRegime ? 0.5 : 1);     // equity'nin %1'i risk (bear'de %0.5)
+  const defensive = bearRegime || (mkt.breadth != null && mkt.breadth < 0.4);   // breadth proxy: AL oranı <%40 → savunma
+  const MAX_POS = defensive ? 2 : 5;                 // düşüş/zayıf-genişlik → az pozisyon
+  const RISK_PCT = 0.01 * (defensive ? 0.5 : 1) * (mkt.volScale || 1);   // %1 risk × vol-hedef ölçeği
   const MAXCOST = 0.30;                               // tek pozisyon en fazla portföyün %30'u
   const upside = s => (s.target1 && s.price) ? (s.target1 - s.price) / s.price * 100 : 0;
   const ddOK = !st.dayStart || (equity - st.dayStart) / st.dayStart > -0.03;
   const disabled = disabledSetups(st.trades);         // ampirik: net-zararlı kurulumları durdur
   let candidates = signals.filter(s => s.signal === "AL" && !st.pos[s.sym] && !disabled.has(setupOf(s)) && !s.blackout && !s.weakFund);
-  if (bearRegime) candidates = candidates.filter(s => s.dip);   // düşüş rejiminde SADECE dip dönüşleri
+  if (defensive) candidates = candidates.filter(s => s.dip);   // düşüş/zayıf-genişlik → SADECE dip
   candidates = candidates
-    .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 + (s.rr || 0) * 3 + (s.rs || 0) * 0.5 + (s.secStrong ? 5 : 0) + (s.dip ? s.dip * 2.5 : 0) }))   // güven+potansiyel+R:R+göreli güç+sektör+dip(backtest:en iyi kenar)
+    .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 + (s.rr || 0) * 3 + (s.rs || 0) * 0.8 + (s.secStrong ? 5 : 0) + (s.dip ? s.dip * 2.5 : 0) + (s.ret60 || 0) * 0.3 + (s.er || 0) * 8 }))   // güven+potansiyel+R:R+göreli güç+sektör+dip(backtest:en iyi kenar)
     .sort((a, b) => b._score - a._score);
   for (const sig of candidates) {
     if (Object.keys(st.pos).length >= MAX_POS || !ddOK) break;
@@ -423,6 +425,13 @@ async function main() {
   const xuMA200 = _xc.length >= 200 ? _xc.slice(-200).reduce((a, b) => a + b, 0) / 200 : null;
   const bearRegime = !!(xuMA200 && xuNow && xuNow < xuMA200);
   console.log(`Rejim: XU100 ${xuNow ?? "?"} vs MA200 ${xuMA200 ? xuMA200.toFixed(0) : "?"} → ${bearRegime ? "DÜŞÜŞ (savunma)" : "NORMAL"}`);
+  const _al = signals.filter(s => s.signal === "AL").length, _sa = signals.filter(s => s.signal === "SAT").length;
+  const breadth = (_al + _sa) ? _al / (_al + _sa) : 0.5;
+  const _ic = idxRows.map(r => r.close), _rr = [];
+  for (let k = Math.max(1, _ic.length - 20); k < _ic.length; k++) _rr.push((_ic[k] - _ic[k - 1]) / _ic[k - 1]);
+  const _m = _rr.reduce((a, b) => a + b, 0) / (_rr.length || 1), _sd = Math.sqrt(_rr.reduce((a, b) => a + (b - _m) ** 2, 0) / (_rr.length || 1)) * Math.sqrt(252);
+  const volScale = +Math.max(0.5, Math.min(1.3, _sd > 0 ? 0.20 / _sd : 1)).toFixed(2);
+  console.log(`Genişlik(AL%): ${(breadth * 100).toFixed(0)} · piyasa vol %${(_sd * 100).toFixed(0)} → risk ölçeği ${volScale}`);
   for (const s of signals) s.rs = +((s.ret60 || 0) - idxRet60).toFixed(1);   // endekse göre fazla getiri
   const _rsCut = signals.length;
   signals = signals.filter(s => s.signal !== "AL" || s.dip || s.rs > -3);     // endeksten belirgin zayıf AL'ı ele (dip hariç)
@@ -473,7 +482,7 @@ async function main() {
   if (GIST_ID && GIST_TOKEN) {
     // MCP olay/analist/temel katmanı — yalnız en güçlü 6 AL adayı (hız + fail-safe; bot sunucu-tarafı, CORS yok)
     if (isTradingHours()) { try { await mcpEnrich(signals.filter(s => s.signal === "AL").slice(0, 6)); } catch {} }
-    st = await runPaper(signals, xuNow, bearRegime);
+    st = await runPaper(signals, xuNow, bearRegime, null, { breadth, volScale });
   } else {
     console.log("⚠ Gist yok — AI TRADER atlandı (state kalıcı olmadan paper trading her çalışmada sıfırlanır). GH_GIST_TOKEN + GIST_ID secret'larını ekle.");
   }
