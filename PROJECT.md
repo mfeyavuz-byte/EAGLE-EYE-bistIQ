@@ -1000,7 +1000,7 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - ENDEKS TARA: interaktif MCP tool-runner (kullanıcı tool+arg seçiyor) → bot pre-compute edemez. MCP'de browser CORS yok, proxy'ler POST+SSE taşımıyor → **tek çözüm Cloudflare Worker** (browser→worker→MCP) ya da ENDEKS TARA'yı bot-gist veri görüntüleyiciye dönüştürmek.
 
 ## v4.2 — ENDEKS TARA bot→gist (deploy yok) + sektör rotasyonu kaldırıldı
-- (düzeltme) BIST sayfası "📊 SEKTÖREL PERFORMANS (BUGÜN)" bölümü kaldırıldı; "🔄 SEKTÖR ROTASYONU" da render dışı.
+- (düzeltme) BIST sayfası "📊 SEKTÖREL PERFORMANS (BUGÜN)" kaldırıldı; "🔄 SEKTÖR ROTASYONU" GERİ getirildi (restore).
 - **Bot:** `scanIndices()` 5 endeksi (XU100/XU030/XUSIN/XUMAL/XUHIZ) MCP `scan_stocks` ile sunucu-tarafı tarar (CORS yok) → `eagle_index.json` gist'e yazar (günde 1, `st.lastIdxDay`). Her hisse: sym/name/close/chg/vol.
 - **App:** `callMCP` scan_stocks CORS'ta patlayınca `_mcpGistScan` ile gist'ten okur (DEFAULT_GIST gömülü), uyumlu `{stocks}` döner → tüm ENDEKS TARA dalları (fırsat/momentum/dip) otomatik çalışır. preset: bullish_momentum→change desc, oversold→change asc, volume→vol desc.
 - **Kaldırıldı:** "🔄 SEKTÖR ROTASYONU" render'dan çıkarıldı (fonksiyon duruyor, gösterilmiyor — şimdilik).
