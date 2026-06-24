@@ -998,3 +998,10 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 ## v4.1 — Haber akışı fix (bot→gist→app, deploy gerekmez)
 - App haber fallback'i artık `localStorage feybot_gistid` boşsa **gömülü DEFAULT_GIST**'e düşüyor. Bot her run `eagle_news.json` yazıyor; proxy'ler çökse de app gist'ten okur (api.github.com CORS-ok). SENKRON gerekmez.
 - ENDEKS TARA: interaktif MCP tool-runner (kullanıcı tool+arg seçiyor) → bot pre-compute edemez. MCP'de browser CORS yok, proxy'ler POST+SSE taşımıyor → **tek çözüm Cloudflare Worker** (browser→worker→MCP) ya da ENDEKS TARA'yı bot-gist veri görüntüleyiciye dönüştürmek.
+
+## v4.2 — ENDEKS TARA bot→gist (deploy yok) + sektör rotasyonu kaldırıldı
+- **Bot:** `scanIndices()` 5 endeksi (XU100/XU030/XUSIN/XUMAL/XUHIZ) MCP `scan_stocks` ile sunucu-tarafı tarar (CORS yok) → `eagle_index.json` gist'e yazar (günde 1, `st.lastIdxDay`). Her hisse: sym/name/close/chg/vol.
+- **App:** `callMCP` scan_stocks CORS'ta patlayınca `_mcpGistScan` ile gist'ten okur (DEFAULT_GIST gömülü), uyumlu `{stocks}` döner → tüm ENDEKS TARA dalları (fırsat/momentum/dip) otomatik çalışır. preset: bullish_momentum→change desc, oversold→change asc, volume→vol desc.
+- **Kaldırıldı:** "🔄 SEKTÖR ROTASYONU" render'dan çıkarıldı (fonksiyon duruyor, gösterilmiyor — şimdilik).
+- Doğrulama: bot canlı (XU030 30 hisse) + regresyon; app statik+ana script node --check geçti.
+- NOT: app fallback'i `eagle_index.json` doluysa çalışır → bot bir kez (yeni kodla) çalışmalı ki gist'e yazsın.
