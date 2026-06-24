@@ -1024,3 +1024,8 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 ## v4.6 — HABER KOMPLE ELDEN GEÇİRME (asıl tetik bug'ı dahil)
 ASIL bug: `jt()` (haber fetch) sadece `t==="news" && 30dk geçtiyse` çalışıyordu → boş cache + yakın `feybot_news_ts` → 30dk dolmadan HİÇ çekmiyordu. Fix: `(se.length===0||30dk)` → cache boşsa HABER açılınca ANINDA çeker.
 Tüm zincir garanti: 1) boş-cache anında çek, 2) gist hep yükle if(1), 3) tokensız read (401 yok), 4) dedup title koruması, 5) analyzeNewsImpact null koruması. Render filtresi default "all" (gizlemez).
+
+## v4.7 — Gist ID ekranda gizlendi
+- SENKRON metni `"Gist ID: <id>"` → `"Gist bağlı ✓"` (ID görünmez).
+- SENKRON gist input → `type:"password"` (değer maskeli). `defaultValue`/localStorage korunur.
+- `DEFAULT_GIST` kodda aynen duruyor → okuma/çalışma etkilenmez. Sadece ekranda görünmüyor.
