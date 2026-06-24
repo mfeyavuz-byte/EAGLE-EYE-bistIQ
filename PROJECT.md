@@ -1006,3 +1006,8 @@ Saf TA tek hissede ~%37-41 isabet (yön). Güven/ADX/trend isabeti ARTIRMIYOR (k
 - **Kaldırıldı:** "🔄 SEKTÖR ROTASYONU" render'dan çıkarıldı (fonksiyon duruyor, gösterilmiyor — şimdilik).
 - Doğrulama: bot canlı (XU030 30 hisse) + regresyon; app statik+ana script node --check geçti.
 - NOT: app fallback'i `eagle_index.json` doluysa çalışır → bot bir kez (yeni kodla) çalışmalı ki gist'e yazsın.
+
+## v4.3 — Haber kesin fix: gist HER ZAMAN yüklenir
+- Tanı: fix canlıdaydı + gist'te 80 taze haber vardı, ama `if(C.length<5)` kapısı proxy'ler ≥5 bayat haber döndürünce gist'i HİÇ okumuyordu.
+- Fix: `if(C.length<5)`→`if(1)` — gist `eagle_news.json` (bot her run yazar, 80 haber) HER ZAMAN yüklenir; dedup+sort halleder. Proxy'lere bağımlı değil.
+- SW cache v106→v107 (eski cache temizlensin, tarayıcı taze app çeksin).
