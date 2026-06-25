@@ -1,5 +1,5 @@
 // EAGLE EYE: bistIQ SW — v106 (FIX: gist/api.github.com artik cache'lenmiyor → pozlar hard-refresh'siz guncel)
-const CACHE = 'feysbot-v107';
+const CACHE = 'feysbot-v108';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();

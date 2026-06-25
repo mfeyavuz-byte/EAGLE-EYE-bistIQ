@@ -1059,3 +1059,8 @@ Trailing momentum gecikmeli; coil (vol kasılması + birikim) momentumdan ÖNCE 
 - **Equity-curve de-risking:** st.equityLog son 20 ort altındaysa RISK_PCT ×0.6 (st.eqRisk). Kendi kayıp serisinde otomatik küçülür. m2 raporunda "🛡 kısık" gösterilir. Pozisyon sıfırlama mantığına DOKUNMAZ.
 - **Korelasyon-farkında:** scanOne `rets20` (son 20g getiri) döndürür; açma loop'unda aday, eldeki pozlarla corr>0.8 VE _score < en iyi×0.85 ise atlanır — ama aday GÜÇLÜYSE (top'a yakın) korelasyona rağmen alınır (kullanıcı: ikisi de iyi yükselecekse ikisini de al). pozisyona rets20 saklanır.
 - NOT: ikisi de portföy-seviyesi → HİSSE TARA'ya (portföysüz) uymaz. node --check + regresyon geçti.
+
+## v4.8 — HABER kesin: gist-önce anında yükle + her açılışta tetik
+- jt başında: HABER açılınca ÖNCE gist eagle_news.json'u tokensız çek + `_e` ile ANINDA göster (proxy'leri bekleme; proxy hang/yavaşlığına bağışık). Sonra mevcut akış (proxy+gist merge) arka planda tazeler.
+- Tetik: `t==="news"&&jt()` — HABER her açıldığında çeker (eski 30dk/se.length kapısı kaldırıldı; `if(!Le)` çift-tetiği önler).
+- SW cache → v108 (tarayıcı taze app çeksin). node --check geçti.
