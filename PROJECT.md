@@ -1043,3 +1043,10 @@ Tüm zincir garanti: 1) boş-cache anında çek, 2) gist hep yükle if(1), 3) to
 - `index.html` scanner: `priority`'ye **Kaufman ER ×8** (trendlilik) + **ret60 ×0.3** (momentum) eklendi → trend/momentum hisse listede öne gelir. ER/momentum ham veri `y`'den hesaplanır.
 - Breadth/vol-targeting/Bayes EKLENMEDİ (portföy/market-seviyesi; hisse-bazlı scanner'a anlamsız). Bu 3'ü botta (AI TRADER) kalır.
 - node --check geçti; diğer scanner mantığı bozulmadı.
+
+## v5.2 — Pre-Momentum (coil) skoru: momentumu oluşmadan yakala
+Trailing momentum gecikmeli; coil (vol kasılması + birikim) momentumdan ÖNCE gelir.
+- **Bot scanOne `preMom`:** squeezeOn(30) + OBV↑&fiyat yatay(25) + ATR düşük<son60 ort×0.85(25) + squeezeOff&hacim>1.5×ort(20=trigger). _score'a +preMom×0.4. Mevcut enrichData alanlarından, ekstra istek yok.
+- **App HİSSE TARA:** priority += squeezeOn(40) + range compression(30: son10 range < son40 range×0.4). k.last + ham veri y'den.
+- Asimetrik kullanım: coil'de küçük giriş + teyitte pyramiding (zaten var). Gürültülü → backtest'le eşik ayarı şart.
+- node --check (bot+app) + regresyon geçti.
