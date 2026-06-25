@@ -1050,3 +1050,7 @@ Trailing momentum gecikmeli; coil (vol kasılması + birikim) momentumdan ÖNCE 
 - **App HİSSE TARA:** priority += squeezeOn(40) + range compression(30: son10 range < son40 range×0.4). k.last + ham veri y'den.
 - Asimetrik kullanım: coil'de küçük giriş + teyitte pyramiding (zaten var). Gürültülü → backtest'le eşik ayarı şart.
 - node --check (bot+app) + regresyon geçti.
+
+## v5.3 — Algoritmik özellikler Telegram'a yansıtıldı
+- HİSSE TARA raporu (m1): AL'lar artık _as skoruyla sıralı (confidence + ER×8 + preMom×0.4 + ret60×0.3). Satırlarda etiket: 🔥coil (preMom≥50), ⚡trend (ER≥0.5), 📈mom (ret60≥15).
+- AI TRADER raporu (m2): rejim satırına genişlik (breadth %) + risk ölçeği (vol-targeting) eklendi.

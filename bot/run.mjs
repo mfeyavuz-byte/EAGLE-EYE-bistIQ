@@ -501,8 +501,8 @@ async function main() {
 
   if (doReport) {
     // 1) HİSSE TARA — güncel en güçlü AL/SAT
-    const al = signals.filter(s => s.signal === "AL").slice(0, 15), sa = signals.filter(s => s.signal === "SAT").slice(0, 15);
-    const f = s => `${s.sym} %${s.confidence} @${s.price}₺ · stop ${s.stopLoss} · hedef ${s.target1}${s.news ? " · " + s.news : ""}`;
+    const _as = s => (s.confidence || 0) + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.ret60 || 0) * 0.3; const al = signals.filter(s => s.signal === "AL").sort((a, b) => _as(b) - _as(a)).slice(0, 15), sa = signals.filter(s => s.signal === "SAT").slice(0, 15);
+    const f = s => `${s.sym} %${s.confidence} @${s.price}₺${s.preMom >= 50 ? " 🔥coil" : ""}${(s.er || 0) >= 0.5 ? " ⚡trend" : ""}${(s.ret60 || 0) >= 15 ? " 📈mom" : ""} · stop ${s.stopLoss} · hedef ${s.target1}${s.news ? " · " + s.news : ""}`;
     let m1 = "🦅 EAGLE EYE — HİSSE TARA (motor)\n" + fmtTime();
     if (!signals.length) m1 += "\n\n⚠ Tarama 0 sinyal döndü — Yahoo/veri kaynağı geçici sorun olabilir.";
     if (al.length) m1 += `\n\n📈 EN GÜÇLÜ AL (${al.length}):\n` + al.map(f).join("\n");
@@ -533,7 +533,7 @@ async function main() {
         m2 += `\n🏛 XU100: ${idxRet >= 0 ? "+" : ""}${idxRet.toFixed(2)}%`;
         m2 += `\n⚖️ Endekse relatif: ${rel >= 0 ? "+" : ""}${rel.toFixed(2)}% ${rel >= 0 ? "✅ üstünde" : "🔻 altında"}`;
       }
-      m2 += `\n🌐 Rejim: ${bearRegime ? "DÜŞÜŞ — savunma (az poz · sadece dip · yarı risk)" : "NORMAL"}`;
+      m2 += `\n🌐 Rejim: ${bearRegime ? "DÜŞÜŞ — savunma" : "NORMAL"} · genişlik %${Math.round(breadth * 100)} · risk ölçeği ${volScale}`;
       const ss = setupStats(st.trades);
       if (Object.keys(ss).length) m2 += "\n🧪 Kurulum (kazanan/toplam): " + Object.entries(ss).map(([k, v]) => `${k} ${v.w}/${v.n}${v.pnl ? ` (${v.pnl >= 0 ? "+" : ""}${Math.round(v.pnl)}₺)` : ""}`).join(" · ");
       await sendTG(m2); sent++; await sleep(400);
