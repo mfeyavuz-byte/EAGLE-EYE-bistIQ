@@ -1038,3 +1038,8 @@ Tüm zincir garanti: 1) boş-cache anında çek, 2) gist hep yükle if(1), 3) to
 4. **Bayes kurulum-edge:** riskMult artık Beta-Binomial shrinkage `(w+4)/(n+8)` (küçük örnek %50'ye çekilir); eşik n≥3.
 5. **Trendlilik (Kaufman ER):** scanOne `er` döndürür; _score'a +er×8 (trend hisseyi öne al, choppy'i geri).
 - NOT: App HİSSE TARA (index.html ayrı motor) port'u token limiti nedeniyle yapılmadı — bot scanOne (= bot HİSSE TARA raporu) tüm bunları içeriyor. App port'u kalan iş.
+
+## v5.1 — App HİSSE TARA: trendlilik + momentum sıralaması
+- `index.html` scanner: `priority`'ye **Kaufman ER ×8** (trendlilik) + **ret60 ×0.3** (momentum) eklendi → trend/momentum hisse listede öne gelir. ER/momentum ham veri `y`'den hesaplanır.
+- Breadth/vol-targeting/Bayes EKLENMEDİ (portföy/market-seviyesi; hisse-bazlı scanner'a anlamsız). Bu 3'ü botta (AI TRADER) kalır.
+- node --check geçti; diğer scanner mantığı bozulmadı.
