@@ -1054,3 +1054,8 @@ Trailing momentum gecikmeli; coil (vol kasılması + birikim) momentumdan ÖNCE 
 ## v5.3 — Algoritmik özellikler Telegram'a yansıtıldı
 - HİSSE TARA raporu (m1): AL'lar artık _as skoruyla sıralı (confidence + ER×8 + preMom×0.4 + ret60×0.3). Satırlarda etiket: 🔥coil (preMom≥50), ⚡trend (ER≥0.5), 📈mom (ret60≥15).
 - AI TRADER raporu (m2): rejim satırına genişlik (breadth %) + risk ölçeği (vol-targeting) eklendi.
+
+## v5.4 — Equity-curve de-risking + korelasyon-farkında seçim (AI TRADER)
+- **Equity-curve de-risking:** st.equityLog son 20 ort altındaysa RISK_PCT ×0.6 (st.eqRisk). Kendi kayıp serisinde otomatik küçülür. m2 raporunda "🛡 kısık" gösterilir. Pozisyon sıfırlama mantığına DOKUNMAZ.
+- **Korelasyon-farkında:** scanOne `rets20` (son 20g getiri) döndürür; açma loop'unda aday, eldeki pozlarla corr>0.8 VE _score < en iyi×0.85 ise atlanır — ama aday GÜÇLÜYSE (top'a yakın) korelasyona rağmen alınır (kullanıcı: ikisi de iyi yükselecekse ikisini de al). pozisyona rets20 saklanır.
+- NOT: ikisi de portföy-seviyesi → HİSSE TARA'ya (portföysüz) uymaz. node --check + regresyon geçti.

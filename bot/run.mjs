@@ -94,6 +94,7 @@ async function scanOne(sym) {
   const _p10 = ed[ed.length - 11], _r10 = _p10 ? (last.close - _p10.close) / _p10.close * 100 : 0, _obvUp = (last.obv != null && _p10 && _p10.obv != null) ? last.obv > _p10.obv : false;
   const _aa = ed.slice(-60).map(c => c.atr).filter(x => x > 0), _atrAvg = _aa.length ? _aa.reduce((a, b) => a + b, 0) / _aa.length : 0, _atrLow = (last.atr > 0 && _atrAvg > 0) ? last.atr < _atrAvg * 0.85 : false;
   const preMom = (last.squeezeOn ? 30 : 0) + (_obvUp && Math.abs(_r10) < 4 ? 25 : 0) + (_atrLow ? 25 : 0) + (last.squeezeOff && (last.volume || 0) > avgVol * 1.5 ? 20 : 0);
+  const _rs20 = []; for (let i = Math.max(1, daily.length - 20); i < daily.length; i++) _rs20.push(+((daily[i].close - daily[i - 1].close) / daily[i - 1].close).toFixed(4));
   const weekly = await fetchWeekly(sym);                               // ÜST TREND = haftalık
   const k = getSignals(ed, getHigherTrend(weekly), weekly);
   if (!k || k.final === "NÖTR") return null;
@@ -106,7 +107,7 @@ async function scanOne(sym) {
   if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;         // yükselen trende karşı SATMA
   if (!isDip && k.final === "AL" && (last.volume || 0) < avgVol * 0.7) return null; // hacim kuruması = teyitsiz AL
   if (!isDip && k.final === "AL" && (last.rsi || 0) >= 63) return null; // aşırı-alımda/geç girişi ele (backtest: erken giriş %42 vs geç %34)
-  return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol), er: _er, preMom,
+  return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol), er: _er, preMom, rets20: _rs20,
            stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend, ret60: +ret60.toFixed(1), rr: (k.target1 && k.stopLoss && last.close > k.stopLoss) ? +((k.target1 - last.close) / (last.close - k.stopLoss)).toFixed(2) : 0 };
 }
 async function scanAll() {
@@ -140,6 +141,14 @@ function riskMult(setup, st) {
   if (!s || s.n < 3) return 1;            // yeterli kanıt yok → nötr
   const wr = (s.w + 4) / (s.n + 8);       // Bayes (Beta 4,4): küçük örneği %50e shrink
   return wr > 0.55 ? 1.3 : wr < 0.45 ? 0.6 : 1;
+}
+function corr(a, b) {
+  if (!a || !b || a.length < 5 || b.length < 5) return 0;
+  const n = Math.min(a.length, b.length), x = a.slice(-n), y = b.slice(-n);
+  const mx = x.reduce((q, v) => q + v, 0) / n, my = y.reduce((q, v) => q + v, 0) / n;
+  let nu = 0, dx = 0, dy = 0;
+  for (let i = 0; i < n; i++) { const u = x[i] - mx, w = y[i] - my; nu += u * w; dx += u * u; dy += w * w; }
+  return (dx && dy) ? nu / Math.sqrt(dx * dy) : 0;
 }
 
 // MCP olay/analist/temel katmanı (sunucu-tarafı; yalnız en güçlü adaylar — hız + fail-safe).
@@ -303,8 +312,10 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
   // --- AÇMA: ATR-tabanlı risk + piyasa rejimi + kurulum öğrenme ---
   // Seçim: güven+potansiyel+R:R+RS+sektör+dip. Boyut: işlem başına SABİT %risk (lot = risk / ATR-stop mesafesi).
   const defensive = bearRegime || (mkt.breadth != null && mkt.breadth < 0.4);   // breadth proxy: AL oranı <%40 → savunma
+  const _eq = (st.equityLog || []).map(e => e.eq), _eqMA = _eq.length >= 20 ? _eq.slice(-20).reduce((a, b) => a + b, 0) / 20 : null;
+  const eqRisk = (_eqMA && _eq[_eq.length - 1] < _eqMA) ? 0.6 : 1; st.eqRisk = eqRisk;   // equity-curve de-risking: kendi MA20 altı → risk kıs
   const MAX_POS = defensive ? 2 : 5;                 // düşüş/zayıf-genişlik → az pozisyon
-  const RISK_PCT = 0.01 * (defensive ? 0.5 : 1) * (mkt.volScale || 1);   // %1 risk × vol-hedef ölçeği
+  const RISK_PCT = 0.01 * (defensive ? 0.5 : 1) * (mkt.volScale || 1) * eqRisk;   // %1 risk × vol × equity-curve
   const MAXCOST = 0.30;                               // tek pozisyon en fazla portföyün %30'u
   const upside = s => (s.target1 && s.price) ? (s.target1 - s.price) / s.price * 100 : 0;
   const ddOK = !st.dayStart || (equity - st.dayStart) / st.dayStart > -0.03;
@@ -318,6 +329,8 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
     if (Object.keys(st.pos).length >= MAX_POS || !ddOK) break;
     const sec = sectorOf(sig.sym);                                       // SEKTÖR LİMİTİ: aynı sektörde en fazla 2 poz
     if (sec && Object.keys(st.pos).filter(s => sectorOf(s) === sec).length >= 2) continue;
+    const _topS = candidates[0]?._score || 0, _maxC = Math.max(0, ...Object.values(st.pos).map(pp => corr(sig.rets20, pp.rets20)));
+    if (_maxC > 0.8 && (sig._score || 0) < _topS * 0.85) continue;   // yüksek korelasyon + zayıf aday → atla (ikisi de güçlüyse ikisi de alınır)
     const conf = sig.confidence || 0, j = sig.price, up = upside(sig);
     // ATR-tabanlı stop (2×ATR) + 2R hedef; ATR yoksa %3 stop'a düş (volatiliteye duyarlı).
     const slDist = (sig.atr && sig.atr > 0) ? +(2 * sig.atr).toFixed(2) : +(j * 0.03).toFixed(2);
@@ -331,7 +344,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
     if (sig.avgVol && Q > sig.avgVol * 0.05) Q = Math.floor(sig.avgVol * 0.05);  // LİKİDİTE: günlük hacmin en fazla %5'i
     if (Q > 0 && sl < j) {
       st.cash -= Q * j;
-      st.pos[sig.sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0, setup, atr: (sig.atr && sig.atr > 0) ? sig.atr : null };
+      st.pos[sig.sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0, setup, atr: (sig.atr && sig.atr > 0) ? sig.atr : null, rets20: sig.rets20 };
       const costPct = Math.round(Q * j / equity * 100);
       const why = `setup ${setup}(×${rm})${sig.analyst ? " · analist " + sig.analyst : ""}${sig.rs != null ? " · RS " + sig.rs : ""} · R:R ${sig.rr || "?"}`;
       opened.push(`📈 ${sig.sym} · ${Q} lot @ ${j}₺ (%${costPct} · ${setup}) · güven %${conf} · pot %${up.toFixed(1)} · stop ${sl} · hedef ${tp}\n   ↳ ${why}`);
@@ -533,7 +546,7 @@ async function main() {
         m2 += `\n🏛 XU100: ${idxRet >= 0 ? "+" : ""}${idxRet.toFixed(2)}%`;
         m2 += `\n⚖️ Endekse relatif: ${rel >= 0 ? "+" : ""}${rel.toFixed(2)}% ${rel >= 0 ? "✅ üstünde" : "🔻 altında"}`;
       }
-      m2 += `\n🌐 Rejim: ${bearRegime ? "DÜŞÜŞ — savunma" : "NORMAL"} · genişlik %${Math.round(breadth * 100)} · risk ölçeği ${volScale}`;
+      m2 += `\n🌐 Rejim: ${bearRegime ? "DÜŞÜŞ — savunma" : "NORMAL"} · genişlik %${Math.round(breadth * 100)} · risk ölçeği ${volScale}${st.eqRisk < 1 ? " · 🛡 kısık (eq MA20 altı)" : ""}`;
       const ss = setupStats(st.trades);
       if (Object.keys(ss).length) m2 += "\n🧪 Kurulum (kazanan/toplam): " + Object.entries(ss).map(([k, v]) => `${k} ${v.w}/${v.n}${v.pnl ? ` (${v.pnl >= 0 ? "+" : ""}${Math.round(v.pnl)}₺)` : ""}`).join(" · ");
       await sendTG(m2); sent++; await sleep(400);
