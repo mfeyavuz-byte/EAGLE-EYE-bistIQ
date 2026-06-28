@@ -1069,3 +1069,8 @@ Trailing momentum gecikmeli; coil (vol kasılması + birikim) momentumdan ÖNCE 
 - **Bot scanOne `breakout`:** önceki 120 gün dar bant ((hi-lo)/lo < %40) VE bugün kapanış band tepesini %0.5 üstüne kırmış VE hacim >1.3×ort → breakout=1. `boTarget` = ölçülen hedef (tepe + band yüksekliği). _score'a +breakout×15. m1 raporunda "🚀KIRILIM→hedef" etiketi.
 - **App HİSSE TARA:** priority += breakout (40) — dar bazdan tepe kırılımı (y'den hi/lo, k.last.close>hi). Kırılan hisse listede en üste gelir.
 - node --check (bot+app) + regresyon geçti.
+
+## v5.6 — App HİSSE TARA: 💎 Dip Dönüş sekmesi
+- Sekme sırası: Tümü · Day · Swing · 💎 Dip · ⏳ Aylık. Filtre `Re==="dip"?g.dipScore>0` (motorun dip sinyali olan hisseler), sayım `dq`.
+- Dip = düşüş trendinde 7 kontrol (RSI<32 dönüş, MACD hist yükselen, alt BB, hacim>2×, StochRSI<20, OBV dönüş, SuperTrend flip); skor≥3 aday / ≥5 güçlü / ≥6 mükemmel. Backtest'te en iyi kategori (%63 isabet).
+- Aylık sekmesiyle aynı kalıp; day/swing mantığı değişmedi. node --check geçti.
