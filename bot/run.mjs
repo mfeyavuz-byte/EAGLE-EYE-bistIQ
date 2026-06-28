@@ -95,6 +95,8 @@ async function scanOne(sym) {
   const _aa = ed.slice(-60).map(c => c.atr).filter(x => x > 0), _atrAvg = _aa.length ? _aa.reduce((a, b) => a + b, 0) / _aa.length : 0, _atrLow = (last.atr > 0 && _atrAvg > 0) ? last.atr < _atrAvg * 0.85 : false;
   const preMom = (last.squeezeOn ? 30 : 0) + (_obvUp && Math.abs(_r10) < 4 ? 25 : 0) + (_atrLow ? 25 : 0) + (last.squeezeOff && (last.volume || 0) > avgVol * 1.5 ? 20 : 0);
   const _rs20 = []; for (let i = Math.max(1, daily.length - 20); i < daily.length; i++) _rs20.push(+((daily[i].close - daily[i - 1].close) / daily[i - 1].close).toFixed(4));
+  const _bw = daily.slice(-121, -1), _bhi = _bw.length ? Math.max(..._bw.map(b => b.high || b.close)) : 0, _blo = _bw.length ? Math.min(..._bw.map(b => b.low || b.close)) : 0;
+  const _tightB = _blo > 0 && (_bhi - _blo) / _blo < 0.40, breakout = (_tightB && last.close > _bhi * 1.005 && (last.volume || 0) > avgVol * 1.3) ? 1 : 0, boTarget = breakout ? +(_bhi + (_bhi - _blo)).toFixed(2) : null;
   const weekly = await fetchWeekly(sym);                               // ÜST TREND = haftalık
   const k = getSignals(ed, getHigherTrend(weekly), weekly);
   if (!k || k.final === "NÖTR") return null;
@@ -107,7 +109,7 @@ async function scanOne(sym) {
   if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;         // yükselen trende karşı SATMA
   if (!isDip && k.final === "AL" && (last.volume || 0) < avgVol * 0.7) return null; // hacim kuruması = teyitsiz AL
   if (!isDip && k.final === "AL" && (last.rsi || 0) >= 63) return null; // aşırı-alımda/geç girişi ele (backtest: erken giriş %42 vs geç %34)
-  return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol), er: _er, preMom, rets20: _rs20,
+  return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol), er: _er, preMom, rets20: _rs20, breakout, boTarget,
            stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend, ret60: +ret60.toFixed(1), rr: (k.target1 && k.stopLoss && last.close > k.stopLoss) ? +((k.target1 - last.close) / (last.close - k.stopLoss)).toFixed(2) : 0 };
 }
 async function scanAll() {
@@ -323,7 +325,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
   let candidates = signals.filter(s => s.signal === "AL" && !st.pos[s.sym] && !disabled.has(setupOf(s)) && !s.blackout && !s.weakFund);
   if (defensive) candidates = candidates.filter(s => s.dip);   // düşüş/zayıf-genişlik → SADECE dip
   candidates = candidates
-    .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 + (s.rr || 0) * 3 + (s.rs || 0) * 0.8 + (s.secStrong ? 5 : 0) + (s.dip ? s.dip * 2.5 : 0) + (s.ret60 || 0) * 0.3 + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 }))   // güven+potansiyel+R:R+göreli güç+sektör+dip(backtest:en iyi kenar)
+    .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 + (s.rr || 0) * 3 + (s.rs || 0) * 0.8 + (s.secStrong ? 5 : 0) + (s.dip ? s.dip * 2.5 : 0) + (s.ret60 || 0) * 0.3 + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.breakout || 0) * 15 }))   // güven+potansiyel+R:R+göreli güç+sektör+dip(backtest:en iyi kenar)
     .sort((a, b) => b._score - a._score);
   for (const sig of candidates) {
     if (Object.keys(st.pos).length >= MAX_POS || !ddOK) break;
@@ -515,7 +517,7 @@ async function main() {
   if (doReport) {
     // 1) HİSSE TARA — güncel en güçlü AL/SAT
     const _as = s => (s.confidence || 0) + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.ret60 || 0) * 0.3; const al = signals.filter(s => s.signal === "AL").sort((a, b) => _as(b) - _as(a)).slice(0, 15), sa = signals.filter(s => s.signal === "SAT").slice(0, 15);
-    const f = s => `${s.sym} %${s.confidence} @${s.price}₺${s.preMom >= 50 ? " 🔥coil" : ""}${(s.er || 0) >= 0.5 ? " ⚡trend" : ""}${(s.ret60 || 0) >= 15 ? " 📈mom" : ""} · stop ${s.stopLoss} · hedef ${s.target1}${s.news ? " · " + s.news : ""}`;
+    const f = s => `${s.sym} %${s.confidence} @${s.price}₺${s.breakout ? " 🚀KIRILIM→" + s.boTarget : ""}${s.preMom >= 50 ? " 🔥coil" : ""}${(s.er || 0) >= 0.5 ? " ⚡trend" : ""}${(s.ret60 || 0) >= 15 ? " 📈mom" : ""} · stop ${s.stopLoss} · hedef ${s.target1}${s.news ? " · " + s.news : ""}`;
     let m1 = "🦅 EAGLE EYE — HİSSE TARA (motor)\n" + fmtTime();
     if (!signals.length) m1 += "\n\n⚠ Tarama 0 sinyal döndü — Yahoo/veri kaynağı geçici sorun olabilir.";
     if (al.length) m1 += `\n\n📈 EN GÜÇLÜ AL (${al.length}):\n` + al.map(f).join("\n");

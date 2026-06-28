@@ -1064,3 +1064,8 @@ Trailing momentum gecikmeli; coil (vol kasılması + birikim) momentumdan ÖNCE 
 - jt başında: HABER açılınca ÖNCE gist eagle_news.json'u tokensız çek + `_e` ile ANINDA göster (proxy'leri bekleme; proxy hang/yavaşlığına bağışık). Sonra mevcut akış (proxy+gist merge) arka planda tazeler.
 - Tetik: `t==="news"&&jt()` — HABER her açıldığında çeker (eski 30dk/se.length kapısı kaldırıldı; `if(!Le)` çift-tetiği önler).
 - SW cache → v108 (tarayıcı taze app çeksin). node --check geçti.
+
+## v5.5 — Kırılım (breakout) tespiti: uzun baz + tepe kırılımı
+- **Bot scanOne `breakout`:** önceki 120 gün dar bant ((hi-lo)/lo < %40) VE bugün kapanış band tepesini %0.5 üstüne kırmış VE hacim >1.3×ort → breakout=1. `boTarget` = ölçülen hedef (tepe + band yüksekliği). _score'a +breakout×15. m1 raporunda "🚀KIRILIM→hedef" etiketi.
+- **App HİSSE TARA:** priority += breakout (40) — dar bazdan tepe kırılımı (y'den hi/lo, k.last.close>hi). Kırılan hisse listede en üste gelir.
+- node --check (bot+app) + regresyon geçti.
