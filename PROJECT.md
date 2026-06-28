@@ -1074,3 +1074,10 @@ Trailing momentum gecikmeli; coil (vol kasılması + birikim) momentumdan ÖNCE 
 - Sekme sırası: Tümü · Day · Swing · 💎 Dip · ⏳ Aylık. Filtre `Re==="dip"?g.dipScore>0` (motorun dip sinyali olan hisseler), sayım `dq`.
 - Dip = düşüş trendinde 7 kontrol (RSI<32 dönüş, MACD hist yükselen, alt BB, hacim>2×, StochRSI<20, OBV dönüş, SuperTrend flip); skor≥3 aday / ≥5 güçlü / ≥6 mükemmel. Backtest'te en iyi kategori (%63 isabet).
 - Aylık sekmesiyle aynı kalıp; day/swing mantığı değişmedi. node --check geçti.
+
+## v5.7 — Dayanıklılık + haber sekmesi kaldırma
+- **State yedeği (AI TRADER):** runPaper günde 1, değiştirmeden önce bilinen-iyi state'i `feybot_paper_backup.json`'a yazar (`st.lastBackupDay`). Bozulursa geri yüklenir. Non-blocking.
+- **Zengin işlem günlüğü:** açılan poza `feat` (er/preMom/breakout/dip/conf/rs/regime/breadth) eklenir; kapanışta trade'e yazılır → ileride hangi özellik kazandırıyor ölçülebilir + meta-labeling.
+- **mcpEnrich throttle:** main'den çıkarıldı, runPaper'da günde 1 (st.lastMcpDay) çalışır. Yük/gecikme azaldı.
+- **Haber nav sekmesi KALDIRILDI** (2 nav, NavBtn id:news) — haber kodu duruyor, `git revert` ile geri eklenir.
+- AI anahtarları (Grok/Gemini) KODA YAZILMADI — kullanıcı GitHub Secret olarak ekleyecek (XAI_API_KEY, GEMINI_API_KEY). node --check + regresyon geçti.

@@ -250,6 +250,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
   if (!st.dayKey) st.dayKey = today;
   if (!st.startDate) st.startDate = today;
   if (!st.xuStart && xuNow) st.xuStart = xuNow;   // endeks başlangıcı (relatif getiri için)
+  if (st.lastBackupDay !== today && !_test) { const _bk = JSON.stringify(st); st.lastBackupDay = today; gistPut({ "feybot_paper_backup.json": { content: _bk } }).catch(() => {}); }   // günlük yedek (bozulursa geri yükle)
   const scanMap = Object.fromEntries(signals.map(s => [s.sym, s]));
   const satSet = new Set(signals.filter(s => s.signal === "SAT").map(s => s.sym));
   const opened = [], closed = [];
@@ -258,6 +259,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
   // Pozisyon yönetiminin TAMAMI (alım + satım) sadece BIST seansında: hafta içi 09:55–18:05.
   // Açılış (09:55) dahil → gece verilen kararlar sabah açılışta uygulanır.
   const trading = _test && "forceTrading" in _test ? _test.forceTrading : isTradingHours();
+  if (trading && !_test && st.lastMcpDay !== today) { st.lastMcpDay = today; try { await mcpEnrich(signals.filter(s => s.signal === "AL").slice(0, 6)); } catch {} }   // MCP enrich: günde 1
   if (!trading) {
     console.log("⏰ Piyasa dışı — pozisyon yönetimi yok (ne alım ne satım).");
   } else {
@@ -278,7 +280,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
       const half = Math.floor(ps.lot / 2);
       const pnl = +((cur - ps.entry) * half).toFixed(0), pnlPct = +(pct * 100).toFixed(2);
       st.cash += half * cur;
-      st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: half, pnl, pnlPct, open: ps.date, close: today, reason: "TP-yarı", setup: ps.setup || "?" });
+      st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: half, pnl, pnlPct, open: ps.date, close: today, reason: "TP-yarı", setup: ps.setup || "?", feat: ps.feat });
       ps.lot -= half; ps.partial = true; ps.tp = +(cur * 1.05).toFixed(2);   // kalan için hedefi yukarı taşı
       closed.push(`💰 ${sym} YARI KÂR @ ${cur}₺ · +%${pnlPct} (${pnl >= 0 ? "+" : ""}${pnl}₺) · kalan ${ps.lot} lot trailing'de`);
       continue;
@@ -292,7 +294,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
       const label = { SL: "Zarar Durdur", BE: "Başabaş (kâr korundu)", TS: "Trailing Stop", SIG: "SAT sinyali", TP: "Hedef", ZAMAN: "Ölü para (zaman stopu)" }[reason];
       const pnl = +((cur - ps.entry) * ps.lot).toFixed(0), pnlPct = +(pct * 100).toFixed(2);
       st.cash += ps.lot * cur;
-      st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: ps.lot, pnl, pnlPct, open: ps.date, close: today, reason, setup: ps.setup || "?" });
+      st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: ps.lot, pnl, pnlPct, open: ps.date, close: today, reason, setup: ps.setup || "?", feat: ps.feat });
       delete st.pos[sym];
       closed.push(`${pct >= 0 ? "📈" : "📉"} ${sym} @ ${cur}₺ · ${label} · K/Z %${pnlPct} (${pnl >= 0 ? "+" : ""}${pnl}₺)`);
     }
@@ -346,7 +348,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
     if (sig.avgVol && Q > sig.avgVol * 0.05) Q = Math.floor(sig.avgVol * 0.05);  // LİKİDİTE: günlük hacmin en fazla %5'i
     if (Q > 0 && sl < j) {
       st.cash -= Q * j;
-      st.pos[sig.sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0, setup, atr: (sig.atr && sig.atr > 0) ? sig.atr : null, rets20: sig.rets20 };
+      st.pos[sig.sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0, setup, atr: (sig.atr && sig.atr > 0) ? sig.atr : null, rets20: sig.rets20, feat: { er: sig.er, preMom: sig.preMom, breakout: sig.breakout, dip: sig.dip, conf: sig.confidence, rs: sig.rs, regime: bearRegime ? "D" : "N", breadth: mkt.breadth != null ? +mkt.breadth.toFixed(2) : null } };
       const costPct = Math.round(Q * j / equity * 100);
       const why = `setup ${setup}(×${rm})${sig.analyst ? " · analist " + sig.analyst : ""}${sig.rs != null ? " · RS " + sig.rs : ""} · R:R ${sig.rr || "?"}`;
       opened.push(`📈 ${sig.sym} · ${Q} lot @ ${j}₺ (%${costPct} · ${setup}) · güven %${conf} · pot %${up.toFixed(1)} · stop ${sl} · hedef ${tp}\n   ↳ ${why}`);
@@ -499,7 +501,6 @@ async function main() {
   let st = null;
   if (GIST_ID && GIST_TOKEN) {
     // MCP olay/analist/temel katmanı — yalnız en güçlü 6 AL adayı (hız + fail-safe; bot sunucu-tarafı, CORS yok)
-    if (isTradingHours()) { try { await mcpEnrich(signals.filter(s => s.signal === "AL").slice(0, 6)); } catch {} }
     st = await runPaper(signals, xuNow, bearRegime, null, { breadth, volScale });
   } else {
     console.log("⚠ Gist yok — AI TRADER atlandı (state kalıcı olmadan paper trading her çalışmada sıfırlanır). GH_GIST_TOKEN + GIST_ID secret'larını ekle.");
