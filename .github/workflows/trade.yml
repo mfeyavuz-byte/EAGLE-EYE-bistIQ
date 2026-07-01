@@ -5,9 +5,14 @@ name: EAGLE EYE — Otonom Motor Botu
 # Birden çok başlangıç saati = biri kaçarsa diğeri yakalar. Repo public → Actions dakikası sınırsız.
 on:
   schedule:
-    - cron: "0 7 * * 1-5"    # ~10:00 İstanbul (asıl başlangıç)
+    - cron: "30 6 * * 1-5"   # ~09:30 İstanbul (erken deneme)
+    - cron: "0 7 * * 1-5"    # ~10:00 (açılış — asıl başlangıç)
+    - cron: "20 7 * * 1-5"   # ~10:20 (yedek)
+    - cron: "45 7 * * 1-5"   # ~10:45 (yedek)
     - cron: "0 8 * * 1-5"    # ~11:00 (yedek)
+    - cron: "30 8 * * 1-5"   # ~11:30 (yedek)
     - cron: "0 9 * * 1-5"    # ~12:00 (yedek)
+    - cron: "0 10 * * 1-5"   # ~13:00 (yedek)
     - cron: "0 11 * * 1-5"   # ~14:00 (yedek)
     - cron: "0 13 * * 1-5"   # ~16:00 (yedek)
   workflow_dispatch:
