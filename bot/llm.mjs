@@ -57,3 +57,19 @@ export async function geminiAdvise(prompt, timeout = 22000) {
     return t.trim() || null;
   } catch { clearTimeout(tid); return null; }
 }
+
+// TEŞHİS: her anahtarın canlı durumu (secret var mı, API ne dönüyor). /aitest için.
+export async function llmDiag() {
+  const out = { geminiModel: GEMINI_MODEL, grokModel: XAI_MODEL };
+  if (!GEMINI_KEY) out.gemini = "secret YOK";
+  else try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }] }] }) });
+    out.gemini = r.ok ? "OK ✓" : ("HTTP " + r.status + " · " + (await r.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 90));
+  } catch (e) { out.gemini = "ERR " + e.message; }
+  if (!XAI_KEY) out.grok = "secret YOK";
+  else try {
+    const r = await fetch("https://api.x.ai/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + XAI_KEY }, body: JSON.stringify({ model: XAI_MODEL, messages: [{ role: "user", content: "hi" }] }) });
+    out.grok = r.ok ? "OK ✓" : ("HTTP " + r.status + " · " + (await r.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 90));
+  } catch (e) { out.grok = "ERR " + e.message; }
+  return out;
+}

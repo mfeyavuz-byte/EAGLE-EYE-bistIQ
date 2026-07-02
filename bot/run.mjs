@@ -7,7 +7,7 @@
 import { getSignals, enrichData, getHigherTrend } from "./engine.mjs";
 import { fetchDaily, fetchWeekly, fetchIndexClose } from "./data.mjs";
 import { mcpCall } from "./mcp.mjs";
-import { grokXSentiment, geminiAdvise, grokEnabled, geminiEnabled } from "./llm.mjs";
+import { grokXSentiment, geminiAdvise, grokEnabled, geminiEnabled, llmDiag } from "./llm.mjs";
 import { positionScan } from "./position-scan.mjs";
 import { fetchNews } from "./news.mjs";
 import syms from "./symbols.json" with { type: "json" };
@@ -409,6 +409,10 @@ async function handleCommands(st) {
       await sendTG(buildStatus(st)); replied++; await sleep(300);
     } else if (txt === "/performans" || txt === "/perf") {
       await sendTG(perfReport(st)); replied++; await sleep(300);
+    } else if (txt === "/aitest") {
+      await sendTG("🔧 AI anahtarları test ediliyor…");
+      const d = await llmDiag();
+      await sendTG(`🔧 AI TEST\n• Gemini (${d.geminiModel}): ${d.gemini}\n• Grok (${d.grokModel}): ${d.grok}`); replied++; await sleep(300);
     } else if (txt.startsWith("/yorum")) {
       // Grok + X (Twitter) duyarlılığı — istek üzerine: /yorum ASELS
       const sym = (raw.split(/\s+/)[1] || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
