@@ -1081,3 +1081,62 @@ Trailing momentum gecikmeli; coil (vol kasılması + birikim) momentumdan ÖNCE 
 - **mcpEnrich throttle:** main'den çıkarıldı, runPaper'da günde 1 (st.lastMcpDay) çalışır. Yük/gecikme azaldı.
 - **Haber nav sekmesi KALDIRILDI** (2 nav, NavBtn id:news) — haber kodu duruyor, `git revert` ile geri eklenir.
 - AI anahtarları (Grok/Gemini) KODA YAZILMADI — kullanıcı GitHub Secret olarak ekleyecek (XAI_API_KEY, GEMINI_API_KEY). node --check + regresyon geçti.
+
+---
+# 📦 OTURUM PAKETİ (SESSION PACK) — başka bir AI için tam devir (2026-07-04)
+
+Bu bölüm, tüm projeyi + son oturumun kararlarını yeni bir AI'ın (veya yeni sohbette benim) sıfırdan kavrayıp devam edebilmesi için özetler. Detaylı sürüm notları için yukarıdaki v3.3–v5.7 bölümlerine bak.
+
+## 1. Proje nedir
+**EAGLE EYE: bistIQ** — BIST (Borsa İstanbul) sinyal + kağıt-trade (paper trading) sistemi. İki parça:
+- **App** (`standalone/index.html`): tek-dosya minified React PWA (build yok, ~325KB). GitHub Pages'te yayında. Kullanıcı arayüzü: BIST, HİSSE TARA, ENDEKS TARA, AI TRADER, SENKRON sekmeleri. (HABER sekmesi bu oturumda kaldırıldı — `git revert` ile geri gelir.)
+- **Bot** (`bot/`): otonom Node 20 ESM (bağımlılıksız), GitHub Actions'ta çalışır (PC/telefon kapalı olabilir). 197 BIST hissesini tarar, AI TRADER sanal portföyünü yönetir, Telegram'a rapor atar.
+
+## 2. Mimari (KRİTİK)
+- **Tek yazıcı kuralı:** BOT gist'e YAZAR (`GIST_ID` secret token'ıyla), APP gist'i sadece OKUR (tokensız — secret gist ID ile herkes okuyabilir, api.github.com CORS-ok). App ASLA gist'e yazmamalı (eski bug: app botun pozlarını ezip sildi).
+- **Gist `1ed22561b2f2803380f3dfb99cda53e7`** (app'te `DEFAULT_GIST` gömülü, ekranda gizli): `feybot_paper.json` (portföy), `feybot_paper_backup.json` (günlük yedek), `eagle_news.json` (bot RSS yazar), `eagle_index.json` (bot MCP endeks taraması), `eagle_sent.json`.
+- **Sinyal motoru** `getSignals`: `bot/engine.mjs` = app'in scripts[6] motorunun BİREBİR kopyası. İkisi ayrı → motor değişikliği İKİSİNE de uygulanmalı.
+- **Veri:** Yahoo Finance doğrudan Node'dan (`query1`→`query2` fallback). Günlük mum sinyal, haftalık üst trend. Tarayıcıda Yahoo/MCP CORS'lu → app CORS-proxy zinciri kullanır (flaky) VEYA bot→gist→app (güvenilir).
+
+## 3. Workflow'lar (`.github/workflows/`)
+- **trade.yml:** cron self-loop. GitHub cron GÜVENİLMEZ → 09:45–12:45 İstanbul arası 10 sık cron (UTC 06:45–09:45); biri tutunca job içinde 18:00'e kadar her 20dk döngü. concurrency guard tek döngü. **Kesin çözüm dış-cron** (cron-job.org → workflow_dispatch API) — kullanıcıya önerildi, kurmadı.
+- **backtest.yml:** Pazar haftalık backtest → Telegram.
+- **pages.yml:** App'i GitHub Pages'e deploy.
+
+## 4. Secrets (GitHub Actions)
+`TG_TOKEN, TG_CHAT, GH_GIST_TOKEN, GIST_ID` (çalışıyor). `XAI_API_KEY, GEMINI_API_KEY` (kullanıcı ekledi ama TEST EDİLMEDİ — anahtarlar geçersiz olabilir; Gemini `AIzaSy...`, xAI `xai-...` formatında olmalı). **`/aitest` Telegram komutu** her anahtarın canlı HTTP durumunu döndürür (teşhis için).
+
+## 5. Bot algoritmik katmanı (runPaper hisse seçimi + scanOne)
+scanOne her hisse için döndürür: signal, confidence, price, dip, atr, avgVol, **er** (Kaufman efficiency=trendlilik), **preMom** (coil: squeeze+OBV+ATR-low+fire), **breakout**+boTarget (120g dar bant tepe kırılımı+hacim), **rets20** (korelasyon için), ret60, rr, stopLoss, target1.
+runPaper AI TRADER seçimi (`_score` sıralı candidates → aç):
+- `_score` = confidence + upside + R:R + RS×0.8 + sektör + dip + ret60×0.3 + **er×8** + **preMom×0.4** + **breakout×15**
+- **Filtreler:** disabledSetups (net-zararlı kurulum durdur), blackout/weakFund (MCP earnings/PE), sektör max 2, likidite hacmin %5'i, **korelasyon** (corr>0.8 & zayıf aday → atla; güçlüyse muaf)
+- **Sizing:** ATR risk paritesi (equity×%1 / 2×ATR stop mesafesi) × volScale (vol-targeting) × eqRisk (equity-curve de-risking: kendi MA20 altı→×0.6) × riskMult (Bayes Beta-Binomial kurulum-edge); MAXCOST %30
+- **Rejim:** XU100<MA200 VEYA breadth(AL oranı)<%40 → `defensive` (max poz 2, sadece dip, yarı risk)
+- **Çıkışlar:** breakeven(+%2), kısmi kâr(TP yarı), ATR chandelier trailing (tepe−3×ATR), ölü-para zaman stopu (14g yatay), SAT sinyali, **pyramiding** (kazanan+AL'a bir kez ekle)
+- **Öğrenme:** her poz `setup`(dip/trend/counter) + `feat`(giriş özellikleri) etiketli; kapanışta trade'e yazılır → hangi özellik kazandırıyor ölçülebilir
+- **State koruma (KRİTİK, dokunma):** gistGet okuma hatasında READ_FAILED → runPaper run'ı atlar, ASLA sıfırlamaz. Yalnız gist GERÇEKTEN boşsa ilk kez başlatır. Günlük `feybot_paper_backup.json` yedeği.
+
+## 6. App HİSSE TARA
+Sekmeler: **Tümü · Day · Swing · 💎 Dip · ⏳ Aylık**. `priority` sıralaması: confidence+j+Q+H + er×8 + ret60×0.3 + preMom + breakout. Aylık=Stage-2 (`monthly`), Dip=`dipScore>0` (motorun 7-kontrollü aşırı-satım dönüş sinyali). PDF: AL'lar Day/Swing/Aylık/Diğer kategorili.
+
+## 7. Ölçüm disiplini (feature 2 — kod yok, en önemli)
+Baseline `[[measurement-baseline]]` 2026-06-22 kaydedildi (sinyal backtest %50 isabet, +%0.51; dipler en iyi %63). Plan: ~3 hafta canlı çalıştır (≈2026-07-13), `/performans` + haftalık backtest ile v3.3-5.7 baseline'ı geçti mi kıyasla. **TA edge ince (~%40-50 isabet); R:R + risk yönetimi taşır. Bunlar risk-ayarlı iyileştirme, sihir değil.**
+
+## 8. Doğrulama yöntemi (sandbox)
+- Bot: `node --check bot/*.mjs` + `node bot/runpaper.test.mjs` (mock state ile runPaper'ı yürütür — init/reset/açma/kapama/pyramiding test eder). runPaper'ın 5. argümanı `_test={state,forceTrading}` test seam'i (üretimde verilmez).
+- App (minified): scripts[6]'ı çıkar → `node --check`. **jsdom sandbox'ta kurulamıyor → render'ı kullanıcı hard-refresh ile teyit eder.** Düzenleme: **python string-replace + count==1 assert** (Edit tool 325KB'de pahalı). Emoji yazma sorunu → `chr()` kullan.
+
+## 9. AÇIK İŞLER (yeni AI/oturum için)
+1. **AI anahtarları doğrulanmadı:** kullanıcı `/aitest` yazıp sonucu iletecek. HTTP 401(Gemini)/400(Grok) → anahtar geçersiz. HTTP 404 → model adı yanlış (XAI_MODEL/GEMINI_MODEL override var).
+2. **Cron güvenilmezliği:** sabah bazen tutmuyor → dış-cron (cron-job.org) kurulması önerildi.
+3. **Haber:** app'te "çalışmıyor" şikayeti sürdü; kod proxy'siz kanıtlandı (gist-önce anında yükle + tokensız + her açılışta tetik), muhtemel sebep tarayıcı SW cache. Kullanıcı HABER sekmesini sildirdi (reversible).
+4. **ENDEKS TARA:** app MCP'yi tarayıcıdan çağıramıyor (CORS) → bot `eagle_index.json` yazar, app `_mcpGistScan` ile oradan okur. Tam parite için Cloudflare Worker (`cf-worker.js`) alternatifi var (kullanıcı deploy etmedi).
+5. **mcpEnrich** günde 1'e throttle edildi.
+
+## 10. EN ÖNEMLİ DERSLER (tekrarlama)
+- **Kök sebebi kanıtlamadan fix yapma.** Bu oturumda haberi ~10 kez "düzelttim" ama asıl bug'lar (bayat token→401, 30dk tetik kapısı, proxy-önce yükleme) ancak canlı test/simülasyonla bulundu. İDDİA değil, ÇALIŞTIRIP KANITLA.
+- **App'i asla gist'e yazdırma** (botun pozlarını ezer).
+- **State sıfırlama mantığına dokunma** (READ_FAILED koruması).
+- **Anahtar/secret'ı ASLA koda/repo'ya yazma** (public repo = ifşa). Kullanıcı chat'e anahtar yazarsa: koda koyma, GitHub Secret öner, rotate uyar.
+- **Kullanıcı çok sinirli ve sabırsız; her turda eksiksiz+hatasız+token-tasarruflu bekliyor.** Doğrulanmış iş yap, boş söz verme.
