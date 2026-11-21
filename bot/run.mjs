@@ -186,7 +186,9 @@ async function mcpEnrich(cands) {
       const days = Math.round((Date.parse(ear.next_earnings_date) - now) / 864e5);
       if (days >= 0 && days <= 3) { s.blackout = true; s.mcpNote = `bilanço ${days}g`; }
     }
-    const cons = an?.summary?.consensus || "", up = an?.upside_potential;   // analist teyidi → güven tilt'i
+    // analist teyidi → güven tilt'i. Yeni BorsaMCP upside_potential vermiyor → ortalama hedef fiyattan (mean_target) hesapla
+    const cons = an?.summary?.consensus || "", mt = +(an?.summary?.mean_target) || 0;
+    const up = typeof an?.upside_potential === "number" ? an.upside_potential : (mt > 0 && s.price > 0 ? (mt - s.price) / s.price * 100 : undefined);
     if (/strong buy/i.test(cons)) s.confidence = Math.min(99, s.confidence + 8);
     else if (/buy/i.test(cons)) s.confidence = Math.min(99, s.confidence + 4);
     else if (/sell/i.test(cons)) s.confidence = Math.max(0, s.confidence - 6);
@@ -656,4 +658,4 @@ if (import.meta.url === _entry) {
     process.exit(1);
   });
 }
-export { runPaper, perfStats, setupStats, disabledSetups, riskMult, setupOf, sendTG };
+export { runPaper, perfStats, setupStats, disabledSetups, riskMult, setupOf, sendTG, mcpEnrich, scanIndices };

@@ -9,7 +9,7 @@
 //
 // 100k istek/gün ücretsiz; günde birkaç yüz istek atarsın → sıfır maliyet.
 
-const TARGET = "https://borsamcp.fastmcp.app";
+const TARGET = "https://borsa.surucu.dev";   // 2026-11: borsamcp.fastmcp.app emekliye ayrıldı, buraya taşındı (yol: /mcp)
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
