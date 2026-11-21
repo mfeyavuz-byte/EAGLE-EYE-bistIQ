@@ -883,7 +883,7 @@ standalone/  7 dosya · 300 KB total
 
 **Bildirim:** saat başı Telegram (HİSSE TARA + AI TRADER durumu + XU100 relatif). Komutlar: /durum /pozisyonlar. Sağlık alarmı + FATAL bildirimi.
 
-**Çalışma:** `trade.yml` self-loop (cron başlatır, iş 10-18 her 20dk tarar — GitHub cron güvenilmezliğini aşar). Repo public → Actions sınırsız.
+**Çalışma:** `trade.yml` saatlik tetik + `bot/gate.mjs` saat kapısı (10:00–18:00 her 20dk; cron gecikmesinden bağımsız) + kendini yeniden başlatma — ayrıntı OTURUM PAKETİ §3. Repo public → Actions sınırsız.
 
 **Açık işler:** AI (Claude) sermaye dağıtıcısı (onay bekliyor); kalite eşiklerini backtest'le doğrulama.
 
@@ -919,7 +919,7 @@ standalone/  7 dosya · 300 KB total
 2. **APP ASLA GIST'E YAZMAMALI** — sadece bot yazar. App'in `[Se]` sync'i + in-app trade'i KAPALI tutuldu; açarsan botun pozlarını EZER (bir kez ezdi, BAKAB pozları gist geçmişinden kurtarıldı). 
 3. **Motor GÜNLÜK mum kullanır** (15dk değil): 15dk'da MA200 hep null → düşen hisseye AL (falling-knife). `fetchDaily` 2y, üst trend `fetchWeekly`.
 4. **`node --check` geçmesi JSX ağacının DOĞRU olduğunu göstermez** — yanlış parantez render'ı sadece nav'a çökertir. jsdom ile doğrula: `root.firstElementChild.className==='has-bottom-nav'` olmalı, innerHTML ~95k+.
-5. **GitHub cron güvenilmez** → trade.yml self-loop (cron başlatır, iş 10-18 her 20dk tarar). **Çalışan döngü, BAŞLADIĞI commit'in kodunu kullanır** — yeni kod için eski run'ı Cancel + Run workflow gerekir.
+5. **GitHub cron saatlerce gecikir** (2026-11: 8–10 sa) → tetik saatine güvenme; trade.yml saatlik tetik + gate.mjs saat kapısı (bkz. OTURUM PAKETİ §3). **Çalışan döngü, BAŞLADIĞI commit'in kodunu kullanır** — yeni kod için eski run'ı Cancel + Run workflow gerekir.
 6. Bot `st.start !== START` ise portföyü sıfırlar (START_CASH env, varsayılan 500k).
 7. Pozisyon yönetimi sadece hafta içi 09:55–18:05 (isTradingHours).
 
@@ -1099,12 +1099,12 @@ Bu bölüm, tüm projeyi + son oturumun kararlarını yeni bir AI'ın (veya yeni
 - **Veri:** Yahoo Finance doğrudan Node'dan (`query1`→`query2` fallback). Günlük mum sinyal, haftalık üst trend. Tarayıcıda Yahoo/MCP CORS'lu → app CORS-proxy zinciri kullanır (flaky) VEYA bot→gist→app (güvenilir).
 
 ## 3. Workflow'lar (`.github/workflows/`)
-- **trade.yml:** cron self-loop. GitHub cron GÜVENİLMEZ → 09:45–12:45 İstanbul arası 10 sık cron (UTC 06:45–09:45); biri tutunca job içinde 18:00'e kadar her 20dk döngü. concurrency guard tek döngü. **Kesin çözüm dış-cron** (cron-job.org → workflow_dispatch API) — kullanıcıya önerildi, kurmadı.
+- **trade.yml (2026-11-22 yeniden tasarım):** GitHub cron tetikleri 8–10 SAAT gecikiyordu (09:45 tetiği 18:45–23:00'te geliyordu → bot sabah hiç çalışmadı, kapanış sonrası mesaj attı; Ağu sonundan beri kötüleşti, Actions API'den ölçüldü). Artık: cron **her saat** (`17 * * * *`) → her koşu `bot/gate.mjs` ile İstanbul saatine bakar: seans dışı → mesajsız çık · 05:00–10:00 → 10:00'ı bekle · 10:00–18:00 → 20dk'da bir tara. İş ≤330dk; süre dolunca kendini `workflow_dispatch(mode=loop)` ile yeniden başlatır (GITHUB_TOKEN dispatch'i gecikmesiz + yeni run yaratır; `permissions: actions: write`). Her seansta `PUT .../enable` keepalive (60 gün hareketsizlikte zamanlayıcı kapanıyor — 2026-10-26'da oldu, kullanıcı 11-05'te elle açtı; keepalive'in sayacı sıfırladığı GitHub dokümanında YAZMIYOR, topluluk araçları böyle kullanıyor). Elle Run workflow = `mode=manual` tek tarama+rapor. concurrency tek koşu (bekleyen koşuların 'cancelled' görünmesi normal). Test: `bot/gate.mjs` birim + run bloğunu sahte saatle simülasyon.
 - **backtest.yml:** Pazar haftalık backtest → Telegram.
 - **pages.yml:** App'i GitHub Pages'e deploy.
 
 ## 4. Secrets (GitHub Actions)
-`TG_TOKEN, TG_CHAT, GH_GIST_TOKEN, GIST_ID` (çalışıyor). `XAI_API_KEY, GEMINI_API_KEY` (kullanıcı ekledi ama TEST EDİLMEDİ — anahtarlar geçersiz olabilir; Gemini `AIzaSy...`, xAI `xai-...` formatında olmalı). **`/aitest` Telegram komutu** her anahtarın canlı HTTP durumunu döndürür (teşhis için).
+`TG_TOKEN, TG_CHAT, GIST_ID`. **`GH_GIST_TOKEN` 2026-09-11'den beri ÇALIŞMIYOR** (gist'e son yazım 09-11 18:08; tüm yazımlar — state'ten bağımsız haber dahil — durdu → token süresi doldu, ~90 gün). Sonuç: AI TRADER 09-11 durumunda DONDU (READ_FAILED koruması sayesinde SIFIRLANMADI: nakit 398.619₺, 1 poz, 35 işlem), komutlar cevapsız. Kullanıcı yeni token (classic, yalnız `gist` scope) oluşturup secret'ı güncellemeli. Artık gist hatası HTTP koduyla HİSSE TARA mesajına ⛔ satırı olarak yazılır (sessiz bozulma yok). `XAI_API_KEY, GEMINI_API_KEY`: **workflow env'e HİÇ GEÇİRİLMEMİŞTİ (önceki oturum hatası) → 2026-11-22'de eklendi.** gemini-2.0-flash 2026-06-01'de kapandı → varsayılan `gemini-flash-latest`. **Grok: xAI eski Live Search'ü (`search_parameters`) kapattı (HTTP 410, ~2026-01) → `grokXSentiment` Responses API + `x_search` tool'a taşınmalı (YAPILMADI).** **`/aitest` Telegram komutu** her anahtarın canlı HTTP durumunu döndürür (teşhis için).
 
 ## 5. Bot algoritmik katmanı (runPaper hisse seçimi + scanOne)
 scanOne her hisse için döndürür: signal, confidence, price, dip, atr, avgVol, **er** (Kaufman efficiency=trendlilik), **preMom** (coil: squeeze+OBV+ATR-low+fire), **breakout**+boTarget (120g dar bant tepe kırılımı+hacim), **rets20** (korelasyon için), ret60, rr, stopLoss, target1.
@@ -1129,7 +1129,9 @@ Baseline `[[measurement-baseline]]` 2026-06-22 kaydedildi (sinyal backtest %50 i
 
 ## 9. AÇIK İŞLER (yeni AI/oturum için)
 1. **AI anahtarları doğrulanmadı:** kullanıcı `/aitest` yazıp sonucu iletecek. HTTP 401(Gemini)/400(Grok) → anahtar geçersiz. HTTP 404 → model adı yanlış (XAI_MODEL/GEMINI_MODEL override var).
-2. **Cron güvenilmezliği:** sabah bazen tutmuyor → dış-cron (cron-job.org) kurulması önerildi.
+2. **Cron:** 2026-11-22'de çözüldü (saatlik tetik + saat kapısı + kendini yeniden başlatma, bkz. §3). Ek garanti istenirse dış-cron (cron-job.org → `workflow_dispatch` `{"ref":"main","inputs":{"mode":"loop"}}`) aynen çalışır.
+6. **GH_GIST_TOKEN yenilenmeli** (bkz. §4) — yenilenene kadar AI TRADER donuk.
+7. **Grok x_search göçü** (bkz. §4).
 3. **Haber:** app'te "çalışmıyor" şikayeti sürdü; kod proxy'siz kanıtlandı (gist-önce anında yükle + tokensız + her açılışta tetik), muhtemel sebep tarayıcı SW cache. Kullanıcı HABER sekmesini sildirdi (reversible).
 4. **ENDEKS TARA:** app MCP'yi tarayıcıdan çağıramıyor (CORS) → bot `eagle_index.json` yazar, app `_mcpGistScan` ile oradan okur. Tam parite için Cloudflare Worker (`cf-worker.js`) alternatifi var (kullanıcı deploy etmedi).
 5. **mcpEnrich** günde 1'e throttle edildi.

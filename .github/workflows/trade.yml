@@ -1,25 +1,33 @@
 name: EAGLE EYE — Otonom Motor Botu
 
-# NOT: GitHub'ın zamanlanmış (cron) tetikleri güvenilmezdir — çoğu tetiği atlar/geciktirir.
-# Bu yüzden cron yalnızca DÖNGÜYÜ BAŞLATIR; iş içinde piyasa kapanana dek her 20 dk tarar.
-# Birden çok başlangıç saati = biri kaçarsa diğeri yakalar. Repo public → Actions dakikası sınırsız.
+# NEDEN BÖYLE: GitHub'ın zamanlanmış (cron) tetikleri saatlerce gecikiyor. 2026-11 ölçümü: 8–10 saat —
+# 09:45'e kurulu tetikler 18:45–23:00'te geliyordu → bot sabah hiç çalışmıyor, kapanıştan sonra mesaj atıyordu.
+# ÇÖZÜM: tetiğin saatine güvenme.
+#  1) Cron HER SAAT tetikler (gecikse de gün içinde mutlaka biri gelir).
+#  2) Her koşu İstanbul saatine bakar (bot/gate.mjs): seans dışı → mesajsız hemen çıkar ·
+#     05:00–10:00 → 10:00'ı bekler · 10:00–18:00 → her 20 dk tarar (rapor saat başı).
+#  3) Bir iş en çok ~6 saat sürebildiği için süre dolunca kendini workflow_dispatch ile yeniden başlatır
+#     (dispatch gecikmesizdir) → seans 18:00'e kadar kesintisiz.
+#  4) 60 gün repo hareketsizliğinde GitHub zamanlayıcıyı kapatıyor (2026-10-26'da oldu) → her seansta "enable" keepalive.
+# Elle "Run workflow" (mode=manual) = tek tarama + rapor (test). Döngü sürerken basılırsa kuyrukta bekler/atlanır — normal.
 on:
   schedule:
-    - cron: "45 6 * * 1-5"   # 09:45 İstanbul (erken)
-    - cron: "0 7 * * 1-5"    # 10:00 (açılış — asıl başlangıç)
-    - cron: "20 7 * * 1-5"   # 10:20
-    - cron: "45 7 * * 1-5"   # 10:45
-    - cron: "0 8 * * 1-5"    # 11:00
-    - cron: "20 8 * * 1-5"   # 11:20
-    - cron: "45 8 * * 1-5"   # 11:45
-    - cron: "0 9 * * 1-5"    # 12:00
-    - cron: "20 9 * * 1-5"   # 12:20
-    - cron: "45 9 * * 1-5"   # 12:45
+    - cron: "17 * * * *"   # her saat :17 (saat başı yoğunluğundan kaçın)
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "manual = tek tarama + rapor (test) · loop = seans döngüsü"
+        type: choice
+        options: [manual, loop]
+        default: manual
+
+permissions:
+  contents: read
+  actions: write   # kendini yeniden tetikleme (devam koşusu) + keepalive
 
 concurrency:
   group: eagle-loop
-  cancel-in-progress: false   # aynı anda tek çalışma (üst üste binmesin)
+  cancel-in-progress: false   # aynı anda tek çalışma (gist'e çakışan yazma olmasın)
 
 jobs:
   run:
@@ -30,28 +38,40 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Piyasa saatleri boyunca her 20 dk tara + AI TRADER yönet
+      - name: Seans saatlerinde 20 dk'da bir tara + AI TRADER yönet
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT: ${{ secrets.TG_CHAT }}
           GH_GIST_TOKEN: ${{ secrets.GH_GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.mode }}
         run: |
           set +e
-          echo "=== İlk tarama (event: $GITHUB_EVENT_NAME) ==="
-          node bot/run.mjs
-          # Manuel tetikse tek seferlik çalış (test için), döngüye girme
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "Manuel tetik — tek run, çıkılıyor."; exit 0
+          T0=$(date +%s)
+          API="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/trade.yml"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$MODE" != "loop" ]; then
+            echo "Manuel tetik — tek tarama + rapor."
+            EAGLE_MODE=manual node bot/run.mjs; exit 0
           fi
-          # Zamanlanmışsa: İstanbul 10:00–18:00 arası her 20 dk
-          for i in $(seq 2 16); do
-            H=$(TZ=Europe/Istanbul date +%-H)
-            if [ "$H" -ge 18 ] || [ "$H" -lt 10 ]; then
-              echo "Piyasa saati dışı (İstanbul $H) — döngü bitti."; break
+          W=$(node bot/gate.mjs "$T0")
+          echo "Tetik: $GITHUB_EVENT_NAME · İstanbul $(TZ=Europe/Istanbul date '+%a %H:%M') · kapı: $W"
+          if [ "$W" = "skip" ]; then echo "Seans dışı — çıkılıyor (mesaj yok)."; exit 0; fi
+          case "$W" in ''|*[!0-9]*) echo "Kapı hatası: '$W'"; exit 1;; esac
+          curl -s -o /dev/null -w "keepalive HTTP %{http_code}\n" -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API/enable"
+          if [ "$W" -gt 0 ]; then echo "Açılışa $((W / 60)) dk — bekleniyor."; sleep "$W"; fi
+          END=$((T0 + 330 * 60))   # iş zaman aşımı 350 dk; son tarama en geç 330. dk'da başlar
+          while :; do
+            echo "=== Tarama · İstanbul $(TZ=Europe/Istanbul date +%H:%M) ==="
+            EAGLE_MODE=loop node bot/run.mjs
+            NEXT=$(($(date +%s) + 1200))
+            if [ "$(node bot/gate.mjs "$NEXT")" != "0" ]; then echo "Seans bitti — döngü tamam."; break; fi
+            if [ "$NEXT" -gt "$END" ]; then
+              echo "Süre sınırı — devam koşusu tetikleniyor."
+              curl -s -o /dev/null -w "dispatch HTTP %{http_code}\n" -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API/dispatches" -d "{\"ref\":\"$GITHUB_REF_NAME\",\"inputs\":{\"mode\":\"loop\"}}"
+              break
             fi
             sleep 1200
-            echo "=== İterasyon $i (İstanbul saat $(TZ=Europe/Istanbul date +%H:%M)) ==="
-            node bot/run.mjs
           done
-          echo "Döngü tamamlandı."

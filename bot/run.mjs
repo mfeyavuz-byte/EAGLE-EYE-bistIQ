@@ -55,27 +55,31 @@ async function sendTG(text) {
 // Okuma BAŞARISIZ (rate-limit/5xx/ağ/parse) ile gerçekten BOŞ gist'i ayırt et:
 // başarısızlıkta "bilinmiyor" döndür → çağıran ASLA sıfırlamaz/yazmaz (eski bug: tek hata portföyü siliyordu).
 const READ_FAILED = Symbol("gist_read_failed");
+// Son gist hatası (HTTP durum; -1 = ağ). 0 = sorun yok. Telegram raporuna uyarı olarak yazılır —
+// 2026-09'da token süresi dolunca bot 2+ ay SESSİZCE durmuştu (okuma/yazma 401, kimse fark etmedi).
+let gistErr = 0;
 async function gistGet(file, fallback) {
   if (!GIST_TOKEN || !GIST_ID) return fallback;
   try {
     const r = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
       headers: { Authorization: "Bearer " + GIST_TOKEN, Accept: "application/vnd.github+json" },
     });
-    if (!r.ok) return READ_FAILED;                 // geçici hata (rate-limit/5xx) — boş SAYMA
+    if (!r.ok) { gistErr = r.status; console.error(`[Gist] okunamadı: HTTP ${r.status}`); return READ_FAILED; }   // boş SAYMA
     const g = await r.json();
     const c = g.files?.[file]?.content;
     return c ? JSON.parse(c) : fallback;           // gist var, dosya yok = gerçekten ilk kez
-  } catch { return READ_FAILED; }                  // ağ/parse hatası — durum bilinmiyor
+  } catch (e) { gistErr = gistErr || -1; console.error("[Gist] okuma hatası:", e.message); return READ_FAILED; }   // durum bilinmiyor
 }
 async function gistPut(files) {
   if (!GIST_TOKEN || !GIST_ID) return;
   try {
-    await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+    const r = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
       method: "PATCH",
       headers: { Authorization: "Bearer " + GIST_TOKEN, "Content-Type": "application/json" },
       body: JSON.stringify({ files }),
     });
-  } catch (e) { console.error("[Gist] kaydedilemedi:", e.message); }
+    if (!r.ok) { gistErr = r.status; console.error(`[Gist] yazılamadı: HTTP ${r.status}`); }
+  } catch (e) { gistErr = gistErr || -1; console.error("[Gist] kaydedilemedi:", e.message); }
 }
 
 // ---------- Tarama (motor) ----------
@@ -515,8 +519,12 @@ async function main() {
 
   // ---------- SAAT BAŞI RAPOR (her saat 1 kez; tarama 20+ kez/gün ama mesaj saatlik) ----------
   const istHour = +new Date().toLocaleString("en-US", { timeZone: "Europe/Istanbul", hour: "2-digit", hour12: false });
-  const manual = process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
-  const doReport = !st || manual || st.lastReportHour !== istHour;
+  const istDay = new Date().toISOString().slice(0, 10);
+  // manual = elle "Run workflow" (her seferinde rapor). Döngü koşusu (EAGLE_MODE=loop) workflow_dispatch olsa da saatlik raporlar.
+  const manual = (process.env.EAGLE_MODE || (process.env.GITHUB_EVENT_NAME === "workflow_dispatch" ? "manual" : "")) === "manual";
+  // Saat anahtarı GÜN+saat: dünün son raporu 10'daysa bugünün 10:00 (sabah) raporu yutulmasın.
+  // State yoksa (gist erişilemiyor) her 20 dk'da bir mesaj spam'i yerine yaklaşık saatlik: yalnız saatin ilk 20 dk'sındaki tarama.
+  const doReport = manual || (st ? (st.lastReportHour !== istHour || st.lastReportDay !== istDay) : new Date().getMinutes() < 20);
   let sent = 0;
 
   if (doReport) {
@@ -527,6 +535,7 @@ async function main() {
     if (!signals.length) m1 += "\n\n⚠ Tarama 0 sinyal döndü — Yahoo/veri kaynağı geçici sorun olabilir.";
     if (al.length) m1 += `\n\n📈 EN GÜÇLÜ AL (${al.length}):\n` + al.map(f).join("\n");
     if (sa.length) m1 += `\n\n📉 SAT (${sa.length}):\n` + sa.map(f).join("\n");
+    if (gistErr) m1 += `\n\n⛔ GIST ERİŞİLEMİYOR (HTTP ${gistErr}) — ${[401, 403, 404].includes(gistErr) ? "GH_GIST_TOKEN süresi dolmuş/geçersiz (veya GIST_ID yanlış): GitHub'da yeni token (gist yetkili) oluştur, repo Settings → Secrets → GH_GIST_TOKEN'ı güncelle." : "geçici olabilir."} Bu sürede AI TRADER işlem yapmaz, komutlar cevaplanmaz; portföy korunur.`;
     m1 += "\n\n⚠ Yatırım tavsiyesi değildir · ~15dk gecikmeli olabilir.";
     await sendTG(m1); sent++; await sleep(400);
 
@@ -596,12 +605,12 @@ async function main() {
           console.log(`Endeks taraması yazıldı (${Object.keys(ix.indices).length} endeks)`);
         } catch (e) { console.error("Endeks tarama:", e.message); }
       }
-      st.lastReportHour = istHour; st.hourOpens = []; st.hourCloses = [];
+      st.lastReportHour = istHour; st.lastReportDay = istDay; st.hourOpens = []; st.hourCloses = [];
       await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
       console.log(`Rapor gönderildi · değer ~${Math.round(eq)}₺ · getiri ${portRet.toFixed(2)}% · poz ${openLines.length}`);
     }
   } else {
-    console.log(`Saat ${istHour} raporu zaten gönderildi — sessiz tarama/yönetim. Birikim: ${(st.hourOpens || []).length} açılış, ${(st.hourCloses || []).length} kapanış.`);
+    console.log(`Saat ${istHour} raporu zaten gönderildi — sessiz tarama/yönetim. Birikim: ${(st?.hourOpens || []).length} açılış, ${(st?.hourCloses || []).length} kapanış.`);
   }
 
   console.log(`${sent} Telegram mesajı gönderildi. Toplam ${((Date.now() - t0) / 1e3).toFixed(1)}s`);

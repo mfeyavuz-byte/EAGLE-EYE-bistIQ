@@ -4,7 +4,8 @@
 const XAI_KEY = process.env.XAI_API_KEY;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const XAI_MODEL = process.env.XAI_MODEL || "grok-4";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+// gemini-2.0-flash 2026-06-01'de KAPATILDI (404). "latest" takma adı en güncel Flash'ı izler, modelin emekliye ayrılmasından etkilenmez.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 
 export const llmEnabled = () => !!(XAI_KEY || GEMINI_KEY);
 export const grokEnabled = () => !!XAI_KEY;
