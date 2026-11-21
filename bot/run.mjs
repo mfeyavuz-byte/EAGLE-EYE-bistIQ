@@ -41,14 +41,28 @@ function isTradingHours() {
 // ---------- Telegram ----------
 async function sendTG(text) {
   if (!TG_TOKEN || !TG_CHAT) { console.log("[TG] yapılandırılmamış"); return false; }
-  try {
-    const r = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ chat_id: TG_CHAT, text, disable_web_page_preview: true }),
-    });
-    if (!r.ok) console.error("[TG] hata", r.status, (await r.text().catch(() => "")).slice(0, 120));
-    return r.ok;
-  } catch (e) { console.error("[TG]", e.message); return false; }
+  // Telegram tek mesaj sınırı 4096 karakter; aşan mesaj TAMAMEN reddedilir (15 AL + 15 SAT'lı HİSSE TARA aşabiliyordu)
+  // → satır sınırından ≤3900'lük parçalara böl.
+  const parts = []; let cur = "";
+  for (const line of String(text).split("\n")) {
+    const add = cur ? cur + "\n" + line : line;
+    if (add.length > 3900 && cur) { parts.push(cur); cur = line; } else cur = add;
+  }
+  if (cur) parts.push(cur);
+  let ok = true;
+  for (const p of parts) {
+    const ctrl = new AbortController(), tid = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+        method: "POST", signal: ctrl.signal, headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chat_id: TG_CHAT, text: p.slice(0, 4000), disable_web_page_preview: true }),
+      });
+      if (!r.ok) { ok = false; console.error("[TG] hata", r.status, (await r.text().catch(() => "")).slice(0, 120)); }
+    } catch (e) { ok = false; console.error("[TG]", e.message); }
+    finally { clearTimeout(tid); }
+    if (parts.length > 1) await sleep(300);
+  }
+  return ok;
 }
 
 // ---------- Gist state ----------
@@ -162,6 +176,7 @@ function corr(a, b) {
 async function mcpEnrich(cands) {
   const now = Date.now();
   for (const s of cands) {
+    const c0 = s.confidence;
     const [ear, an, fr] = await Promise.all([
       mcpCall("get_earnings", { symbol: s.sym, market: "bist" }),
       mcpCall("get_analyst_data", { symbol: s.sym, market: "bist" }),
@@ -178,6 +193,7 @@ async function mcpEnrich(cands) {
     if (cons) s.analyst = cons + (typeof up === "number" ? ` ${up.toFixed(0)}%` : "");
     const pe = fr?.valuation?.pe_ratio;                             // temel kapısı: zarar eden şirket (PE≤0) → ele
     if (typeof pe === "number" && pe <= 0) { s.weakFund = true; s.mcpNote = (s.mcpNote ? s.mcpNote + " · " : "") + "zararda(PE<0)"; }
+    s._mcpAdj = s.confidence - c0;                                  // güven ayarı → günlük önbelleğe yazılır
   }
 }
 
@@ -254,16 +270,33 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
   if (!st.dayKey) st.dayKey = today;
   if (!st.startDate) st.startDate = today;
   if (!st.xuStart && xuNow) st.xuStart = xuNow;   // endeks başlangıcı (relatif getiri için)
-  if (st.lastBackupDay !== today && !_test) { const _bk = JSON.stringify(st); st.lastBackupDay = today; gistPut({ "feybot_paper_backup.json": { content: _bk } }).catch(() => {}); }   // günlük yedek (bozulursa geri yükle)
+  // günlük yedek (bozulursa geri yükle). BEKLENİR: ana kayıtla aynı anda gist'e iki PATCH gitmesin (çakışma = işlem kaybı).
+  if (st.lastBackupDay !== today && !_test) { const _bk = JSON.stringify(st); st.lastBackupDay = today; await gistPut({ "feybot_paper_backup.json": { content: _bk } }); }
   const scanMap = Object.fromEntries(signals.map(s => [s.sym, s]));
   const satSet = new Set(signals.filter(s => s.signal === "SAT").map(s => s.sym));
   const opened = [], closed = [];
-  const equity = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * ((scanMap[s]?.price) || p.entry), 0);
+  // Taramada çıkmayan pozisyon → son bilinen fiyat (p.last); eskiden giriş fiyatı kullanılıyordu (boyut/fren hesabı sapıyordu)
+  const equity = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * ((scanMap[s]?.price) || p.last || p.entry), 0);
+  // YENİ GÜN: günlük zarar frenini BU günün açılış değerine bağla. Eskiden işlemlerden SONRA yapılıyordu →
+  // günün ilk taraması (10:00) dünün referansına bakıp yanlışlıkla alım yapmayabiliyordu.
+  if (st.dayKey !== today) { st.dayStart = equity; st.dayKey = today; }
 
   // Pozisyon yönetiminin TAMAMI (alım + satım) sadece BIST seansında: hafta içi 09:55–18:05.
   // Açılış (09:55) dahil → gece verilen kararlar sabah açılışta uygulanır.
   const trading = _test && "forceTrading" in _test ? _test.forceTrading : isTradingHours();
-  if (trading && !_test && st.lastMcpDay !== today) { st.lastMcpDay = today; try { await mcpEnrich(signals.filter(s => s.signal === "AL").slice(0, 6)); } catch {} }   // MCP enrich: günde 1
+  // MCP (bilanço kara listesi / zararda şirket / analist): her hisse GÜNDE 1 sorgulanır, sonuç state'te saklanır → filtre günün
+  // TÜM taramalarında geçerli. Eskiden yalnız günün ilk taramasında uygulanıyor, sonrakilerde unutuluyordu.
+  if (trading && !_test) {
+    if (st.mcpDay !== today) { st.mcpDay = today; st.mcpC = {}; delete st.lastMcpDay; }
+    st.mcpC = st.mcpC || {};
+    const todo = signals.filter(s => s.signal === "AL").slice(0, 6).filter(s => !st.mcpC[s.sym]);
+    if (todo.length) { try { await mcpEnrich(todo); } catch {} for (const s of todo) st.mcpC[s.sym] = { b: s.blackout ? 1 : 0, w: s.weakFund ? 1 : 0, a: s.analyst || "", d: s._mcpAdj || 0, n: s.mcpNote || "" }; }
+    for (const s of signals) {
+      const c = st.mcpC[s.sym]; if (!c || todo.includes(s)) continue;
+      if (c.b) s.blackout = true; if (c.w) s.weakFund = true; if (c.a) s.analyst = c.a; if (c.n) s.mcpNote = c.n;
+      if (c.d) s.confidence = Math.max(0, Math.min(99, s.confidence + c.d));
+    }
+  }
   if (!trading) {
     console.log("⏰ Piyasa dışı — pozisyon yönetimi yok (ne alım ne satım).");
   } else {
@@ -360,9 +393,6 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
   }
   } // seans (trading) bloğu sonu
 
-  const newDay = st.dayKey !== today;
-  if (newDay) st.dayStart = equity;        // yeni gün: günlük drawdown referansını sıfırla
-  st.dayKey = today;
   // Günlük equity logu (performans/analitik) — gün başına 1 nokta
   const eqEnd = st.cash + Object.entries(st.pos).reduce((a, [s, p]) => a + p.lot * ((scanMap[s]?.price) || p.last || p.entry), 0);
   st.equityLog = st.equityLog || [];
@@ -519,7 +549,7 @@ async function main() {
 
   // ---------- SAAT BAŞI RAPOR (her saat 1 kez; tarama 20+ kez/gün ama mesaj saatlik) ----------
   const istHour = +new Date().toLocaleString("en-US", { timeZone: "Europe/Istanbul", hour: "2-digit", hour12: false });
-  const istDay = new Date().toISOString().slice(0, 10);
+  const istDay = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" });   // YYYY-MM-DD (İstanbul)
   // manual = elle "Run workflow" (her seferinde rapor). Döngü koşusu (EAGLE_MODE=loop) workflow_dispatch olsa da saatlik raporlar.
   const manual = (process.env.EAGLE_MODE || (process.env.GITHUB_EVENT_NAME === "workflow_dispatch" ? "manual" : "")) === "manual";
   // Saat anahtarı GÜN+saat: dünün son raporu 10'daysa bugünün 10:00 (sabah) raporu yutulmasın.
@@ -601,8 +631,10 @@ async function main() {
         st.lastIdxDay = st.dayKey;
         try {
           const ix = await scanIndices();
-          await gistPut({ "eagle_index.json": { content: JSON.stringify(ix) } });
-          console.log(`Endeks taraması yazıldı (${Object.keys(ix.indices).length} endeks)`);
+          const nStk = Object.values(ix.indices).reduce((a, v) => a + v.length, 0);
+          // MCP boş dönerse (sunucu kapalı/taşındı) eski iyi veriyi BOŞ listeyle ezme
+          if (nStk) { await gistPut({ "eagle_index.json": { content: JSON.stringify(ix) } }); console.log(`Endeks taraması yazıldı (${nStk} hisse)`); }
+          else console.log("⚠ Endeks taraması boş döndü (MCP) — eski eagle_index.json korunuyor.");
         } catch (e) { console.error("Endeks tarama:", e.message); }
       }
       st.lastReportHour = istHour; st.lastReportDay = istDay; st.hourOpens = []; st.hourCloses = [];
@@ -624,4 +656,4 @@ if (import.meta.url === _entry) {
     process.exit(1);
   });
 }
-export { runPaper, perfStats, setupStats, disabledSetups, riskMult, setupOf };
+export { runPaper, perfStats, setupStats, disabledSetups, riskMult, setupOf, sendTG };

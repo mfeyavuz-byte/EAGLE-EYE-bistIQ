@@ -67,5 +67,16 @@ console.log("SENARYO 3 (öğrenme: zararlı kurulum durdurulur):");
   ok(!st.pos.CNT, "≥10 işlemde net-zararlı 'counter' kurulumu AÇILMADI");
 }
 
+// ---------- SENARYO 4: yeni günün ilk taraması — dünkü kayıp, bugünkü günlük freni tetiklememeli ----------
+console.log("SENARYO 4 (yeni gün: günlük zarar freni bugünün değerine bağlanır):");
+{
+  // Dün gün içi %20 düşüş yaşanmış (dayStart 600k, şimdi 480k). Eski kod ilk taramada dünün referansına bakıp ALIMI ENGELLİYORDU.
+  const state = { cash: 480000, start: 500000, pos: {}, trades: [], dayKey: old, dayStart: 600000, startDate: old, xuStart: 14000, equityLog: [] };
+  const signals = [ sig("FRSH", "AL", 40, { sl: 38, tp: 44, atr: 1 }) ];
+  const st = await runPaper(signals, 14000, false, { state, forceTrading: true });
+  ok(st.dayKey === today && st.dayStart === 480000, "gün devri işlemlerden ÖNCE: dayStart = bugünün açılış değeri (" + st.dayStart + ")");
+  ok(st.pos.FRSH, "yeni günün ilk taramasında alım ENGELLENMEDİ");
+}
+
 console.log(fail ? `\n❌ ${fail} ASSERT BAŞARISIZ` : "\n✅ TÜM ENTEGRASYON TESTLERİ GEÇTİ");
 process.exit(fail ? 1 : 0);

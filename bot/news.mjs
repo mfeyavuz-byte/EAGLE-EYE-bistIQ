@@ -13,9 +13,12 @@ const SOURCES = [
   { id: "trt", name: "TRT Haber", url: "https://www.trthaber.com/sondakika.rss" },
 ];
 
-const clean = s => (s || "")
-  .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-  .replace(/<[^>]+>/g, "").replace(/&[a-z]+;/g, " ").replace(/&#\d+;/g, " ")
+// HTML varlıklarını ÇÖZ (eskiden boşluğa çevriliyordu: "Bankas&#305;" → "Bankas " → haber-etki kelimeleri kaçıyordu)
+const ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const cp = n => { try { return String.fromCodePoint(n); } catch { return " "; } };
+const decode = s => s.replace(/&#x([0-9a-f]+);/gi, (_, h) => cp(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => cp(+d)).replace(/&([a-z]+);/gi, (_, n) => ENT[n.toLowerCase()] ?? " ");
+const clean = s => decode((s || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/<[^>]+>/g, ""))
+  .replace(/<[^>]+>/g, "")            // çözümden çıkan (&lt;p&gt;) etiketleri de at
   .replace(/\s+/g, " ").trim();
 
 function parseRSS(xml, src) {
@@ -33,14 +36,13 @@ function parseRSS(xml, src) {
 }
 
 async function fetchOne(src) {
+  const ctrl = new AbortController(), tid = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const ctrl = new AbortController(), tid = setTimeout(() => ctrl.abort(), 8000);
     const r = await fetch(src.url, { headers: UA, signal: ctrl.signal, redirect: "follow" });
-    clearTimeout(tid);
     if (!r.ok) return [];
-    const xml = await r.text();
-    return parseRSS(xml, src);
+    return parseRSS(await r.text(), src);
   } catch { return []; }
+  finally { clearTimeout(tid); }   // sayaç gövde okunana kadar açık
 }
 
 export async function fetchNews() {

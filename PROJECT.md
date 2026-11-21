@@ -1104,7 +1104,7 @@ Bu bölüm, tüm projeyi + son oturumun kararlarını yeni bir AI'ın (veya yeni
 - **pages.yml:** App'i GitHub Pages'e deploy.
 
 ## 4. Secrets (GitHub Actions)
-`TG_TOKEN, TG_CHAT, GIST_ID`. **`GH_GIST_TOKEN` 2026-09-11'den beri ÇALIŞMIYOR** (gist'e son yazım 09-11 18:08; tüm yazımlar — state'ten bağımsız haber dahil — durdu → token süresi doldu, ~90 gün). Sonuç: AI TRADER 09-11 durumunda DONDU (READ_FAILED koruması sayesinde SIFIRLANMADI: nakit 398.619₺, 1 poz, 35 işlem), komutlar cevapsız. Kullanıcı yeni token (classic, yalnız `gist` scope) oluşturup secret'ı güncellemeli. Artık gist hatası HTTP koduyla HİSSE TARA mesajına ⛔ satırı olarak yazılır (sessiz bozulma yok). `XAI_API_KEY, GEMINI_API_KEY`: **workflow env'e HİÇ GEÇİRİLMEMİŞTİ (önceki oturum hatası) → 2026-11-22'de eklendi.** gemini-2.0-flash 2026-06-01'de kapandı → varsayılan `gemini-flash-latest`. **Grok: xAI eski Live Search'ü (`search_parameters`) kapattı (HTTP 410, ~2026-01) → `grokXSentiment` Responses API + `x_search` tool'a taşınmalı (YAPILMADI).** **`/aitest` Telegram komutu** her anahtarın canlı HTTP durumunu döndürür (teşhis için).
+`TG_TOKEN, TG_CHAT, GIST_ID`. **`GH_GIST_TOKEN` 2026-09-11'den beri ÇALIŞMIYOR** (gist'e son yazım 09-11 18:08; tüm yazımlar — state'ten bağımsız haber dahil — durdu → token süresi doldu, ~90 gün). Sonuç: AI TRADER 09-11 durumunda DONDU (READ_FAILED koruması sayesinde SIFIRLANMADI: nakit 398.619₺, 1 poz, 35 işlem), komutlar cevapsız. Kullanıcı yeni token (classic, yalnız `gist` scope) oluşturup secret'ı güncellemeli. Artık gist hatası HTTP koduyla HİSSE TARA mesajına ⛔ satırı olarak yazılır (sessiz bozulma yok). `XAI_API_KEY, GEMINI_API_KEY`: **workflow env'e HİÇ GEÇİRİLMEMİŞTİ (önceki oturum hatası) → 2026-11-22'de eklendi.** gemini-2.0-flash 2026-06-01'de kapandı → varsayılan `gemini-flash-latest`. **Grok: xAI eski Live Search'ü (`search_parameters`) kapattı (HTTP 410, ~2026-01) → 2026-11-22'de Responses API (`/v1/responses`) + `x_search` aracına TAŞINDI** (model `grok-4.7`, `max_turns` 2, `from_date` son 3 gün; xAI gönderi başına ücretlendirir: $5/1000 gönderi). Cevap şeması dokümanda tam yok → esnek ayrıştırıcı (`output_text` VEYA `output[].content[].text`). `/aitest` artık GERÇEK X araması yolunu dener, format farklıysa gelen alanları yazar. Canlı anahtarla test EDİLMEDİ (mock testli) → kanıt kullanıcının `/aitest`'i. **`/aitest` Telegram komutu** her anahtarın canlı HTTP durumunu döndürür (teşhis için).
 
 ## 5. Bot algoritmik katmanı (runPaper hisse seçimi + scanOne)
 scanOne her hisse için döndürür: signal, confidence, price, dip, atr, avgVol, **er** (Kaufman efficiency=trendlilik), **preMom** (coil: squeeze+OBV+ATR-low+fire), **breakout**+boTarget (120g dar bant tepe kırılımı+hacim), **rets20** (korelasyon için), ret60, rr, stopLoss, target1.
@@ -1131,7 +1131,7 @@ Baseline `[[measurement-baseline]]` 2026-06-22 kaydedildi (sinyal backtest %50 i
 1. **AI anahtarları doğrulanmadı:** kullanıcı `/aitest` yazıp sonucu iletecek. HTTP 401(Gemini)/400(Grok) → anahtar geçersiz. HTTP 404 → model adı yanlış (XAI_MODEL/GEMINI_MODEL override var).
 2. **Cron:** 2026-11-22'de çözüldü (saatlik tetik + saat kapısı + kendini yeniden başlatma, bkz. §3). Ek garanti istenirse dış-cron (cron-job.org → `workflow_dispatch` `{"ref":"main","inputs":{"mode":"loop"}}`) aynen çalışır.
 6. **GH_GIST_TOKEN yenilenmeli** (bkz. §4) — yenilenene kadar AI TRADER donuk.
-7. **Grok x_search göçü** (bkz. §4).
+7. **MCP sunucusu TAŞINDI:** `borsamcp.fastmcp.app` artık tek araç (`borsa_mcp_has_moved`) sunuyor, "https://borsa.surucu.dev/mcp" adresine taşındığını söylüyor. Bot (`bot/mcp.mjs`), app (2 yer) ve `cf-worker.js` hâlâ eski adreste → bilanço/analist/PE filtreleri ve ENDEKS TARA ölü. Yeni adres araç çıktısından geldiği için kullanıcı onayı bekleniyor; onaylanırsa önce yeni sunucunun `tools/list` şeması (scan_stocks argümanları vb.) kontrol edilmeli.
 3. **Haber:** app'te "çalışmıyor" şikayeti sürdü; kod proxy'siz kanıtlandı (gist-önce anında yükle + tokensız + her açılışta tetik), muhtemel sebep tarayıcı SW cache. Kullanıcı HABER sekmesini sildirdi (reversible).
 4. **ENDEKS TARA:** app MCP'yi tarayıcıdan çağıramıyor (CORS) → bot `eagle_index.json` yazar, app `_mcpGistScan` ile oradan okur. Tam parite için Cloudflare Worker (`cf-worker.js`) alternatifi var (kullanıcı deploy etmedi).
 5. **mcpEnrich** günde 1'e throttle edildi.
@@ -1142,3 +1142,15 @@ Baseline `[[measurement-baseline]]` 2026-06-22 kaydedildi (sinyal backtest %50 i
 - **State sıfırlama mantığına dokunma** (READ_FAILED koruması).
 - **Anahtar/secret'ı ASLA koda/repo'ya yazma** (public repo = ifşa). Kullanıcı chat'e anahtar yazarsa: koda koyma, GitHub Secret öner, rotate uyar.
 - **Kullanıcı çok sinirli ve sabırsız; her turda eksiksiz+hatasız+token-tasarruflu bekliyor.** Doğrulanmış iş yap, boş söz verme.
+
+## 11. 2026-11-22 tam bot taraması — düzeltilenler (kanıtlı)
+- **Telegram 4096 sınırı:** aşan mesaj tamamen reddediliyordu → `sendTG` satır sınırından ≤3900'lük parçalara böler (+15 sn zaman aşımı).
+- **Günlük zarar freni:** gün devri işlemlerden SONRA yapılıyordu → günün ilk taraması dünün referansına bakıp alımı engelleyebiliyordu. Devir artık başta. (runpaper.test SENARYO 4: eski kodda ✗, yenide ✓.)
+- **MCP filtreleri (bilanço/PE<0/analist) yalnız günün ilk taramasında** uygulanıyordu (günde-1 throttle sonucu kaydetmiyordu) → `st.mcpC` günlük önbellek, tüm taramalarda geçerli.
+- **Yedek PATCH beklenmiyordu** → ana kayıtla aynı anda gist'e gidebiliyordu; artık `await`.
+- **Equity** taramada olmayan pozisyonu giriş fiyatıyla sayıyordu → `p.last`.
+- **Zaman aşımı gövdeyi kapsamıyordu** (data/news/mcp/llm): cevap gövdesinde takılma = sonsuz bekleme → `finally` ile temizleme.
+- **Haber HTML varlıkları** (`&#305;`=ı) boşluğa çevriliyordu → doğru çözülür ("Ereğli Demir Çelik..." başlığı 0 → 4 hisse eşleşmesi).
+- **Boş endeks taraması** eski `eagle_index.json`'u ezmiyor. Keepalive `backtest.yml`'yi de kapsıyor. Gemini anahtarı URL yerine `x-goog-api-key` başlığında; çıktı tavanı 2048 (düşünen modeller 500'de boş dönebiliyor).
+- Doğrulama: ağsız birim testleri (Grok/Gemini/aitest/Telegram/haber/motor stres 24 senaryo) + main() uçtan uca sahte gist ile + workflow sahte saat simülasyonu.
+

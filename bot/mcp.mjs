@@ -11,7 +11,6 @@ export async function mcpCall(name, args, timeout = 9000) {
       headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
     });
-    clearTimeout(tid);
     if (!r.ok) return null;
     const txt = await r.text();
     // SSE: "data: {...}" satırını ayıkla
@@ -21,5 +20,6 @@ export async function mcpCall(name, args, timeout = 9000) {
     if (j?.result?.isError) return null;
     const t = j?.result?.content?.[0]?.text;
     return t ? JSON.parse(t) : null;
-  } catch { clearTimeout(tid); return null; }
+  } catch { return null; }
+  finally { clearTimeout(tid); }   // sayaç gövde okunana kadar açık (takılma = sonsuz bekleme olmasın)
 }

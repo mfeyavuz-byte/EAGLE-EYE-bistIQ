@@ -58,14 +58,14 @@ TG_TOKEN=xxx TG_CHAT=yyy GH_GIST_TOKEN=zzz GIST_ID=www node bot/run.mjs
 - **Sağlık alarmı**: tarama 0 sinyal verirse rapora uyarı; bot çökerse Telegram'a "⚠ HATA".
 
 ## ⏱ Çalışma garantisi (dış cron — opsiyonel ama önerilir)
-GitHub'ın kendi cron'u tetikleri atlayabilir. Self-loop bunu büyük ölçüde çözer ama %100 garanti için ücretsiz **cron-job.org**:
+GitHub'ın cron tetikleri saatlerce gecikebiliyor (2026-11 ölçümü: 8–10 sa). `trade.yml` bunu kendisi çözer: her saat tetik + `bot/gate.mjs` saat kapısı (10:00–18:00 arası 20 dk'da bir tarar, dışında mesajsız çıkar) + süre dolunca kendini yeniden başlatır. Ek garanti istersen ücretsiz **cron-job.org**:
 1. github.com → Settings → Developer settings → **Fine-grained token** → repo `EAGLE-EYE-bistIQ` → **Actions: Read and write** izni → oluştur.
 2. **cron-job.org** (ücretsiz üyelik) → Create cronjob:
    - URL: `https://api.github.com/repos/mfeyavuz-byte/EAGLE-EYE-bistIQ/actions/workflows/trade.yml/dispatches`
    - Method: **POST**
    - Headers: `Authorization: Bearer <token>` · `Accept: application/vnd.github+json`
-   - Body: `{"ref":"main"}`
-   - Schedule: hafta içi 10:00 İstanbul (loop gerisini halleder)
+   - Body: `{"ref":"main","inputs":{"mode":"loop"}}`  (**mode loop şart** — yoksa tek taramalık manuel test koşusu olur)
+   - Schedule: hafta içi 09:00 İstanbul (kapı 10:00'ı bekler, döngü gerisini halleder)
 3. Bu, GitHub'a güvenmeden botu garanti başlatır.
 
 ## Başlangıç sermayesi
@@ -78,7 +78,9 @@ Anahtar yoksa sessizce atlanır; bot anahtarsız tam çalışır. Eklemek için 
 |---|---|
 | `GEMINI_API_KEY` | Günlük AI yorum (Gemini sentezi). aistudio.google.com → ücretsiz key |
 | `XAI_API_KEY` | `/yorum SEMBOL` → Grok'un X/Twitter gönderilerine göre duyarlılık yorumu. console.x.ai |
-| `XAI_MODEL` / `GEMINI_MODEL` | (ops.) model override; varsayılan `grok-4` / `gemini-2.0-flash` |
+| `XAI_MODEL` / `GEMINI_MODEL` | (ops.) model override; varsayılan `grok-4.7` / `gemini-flash-latest` (gemini-2.0-flash 2026-06'da kapandı; Grok X araması Responses API + `x_search` ile) |
+
+Teşhis: Telegram'da `/aitest` → her anahtarın GERÇEK kullanım yolunu dener (Grok'ta X araması dahil) ve HTTP durumunu yazar.
 
 - **`/yorum ASELS`** → Grok, X'te son gönderileri canlı tarayıp duyarlılık + kısa yorum döndürür (istek üzerine; maliyet sadece sorunca).
 - **Günlük AI yorum** → Gemini, portföy + adaylar + rejim + (Grok/X duyarlılığı) sentezini günde 1 Telegram'a yazar.

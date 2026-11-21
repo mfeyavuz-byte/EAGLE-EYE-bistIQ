@@ -9,7 +9,6 @@ async function yfetch(sym, interval, range, timeout=8000){
     const ctrl=new AbortController(), tid=setTimeout(()=>ctrl.abort(), timeout);
     try{
       const r=await fetch(u,{headers:UA,signal:ctrl.signal});
-      clearTimeout(tid);
       if(!r.ok)continue;
       const j=await r.json();
       const n=j?.chart?.result?.[0];
@@ -20,7 +19,8 @@ async function yfetch(sym, interval, range, timeout=8000){
         rows.push({ts:S*1e3,date:'',close:+(+q.close[D]).toFixed(2),open:+(+(q.open[D]??q.close[D])).toFixed(2),high:+(+(q.high[D]??q.close[D])).toFixed(2),low:+(+(q.low[D]??q.close[D])).toFixed(2),volume:q.volume[D]??0});
       });
       return rows;
-    }catch(e){ clearTimeout(tid); continue; }
+    }catch(e){ continue; }
+    finally{ clearTimeout(tid); }               // sayaç gövde okunana kadar açık: gövdede takılma = sonsuz bekleme olmasın
   }
   return [];
 }

@@ -51,7 +51,7 @@ jobs:
         run: |
           set +e
           T0=$(date +%s)
-          API="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/trade.yml"
+          WF="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows"
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$MODE" != "loop" ]; then
             echo "Manuel tetik — tek tarama + rapor."
             EAGLE_MODE=manual node bot/run.mjs; exit 0
@@ -60,7 +60,9 @@ jobs:
           echo "Tetik: $GITHUB_EVENT_NAME · İstanbul $(TZ=Europe/Istanbul date '+%a %H:%M') · kapı: $W"
           if [ "$W" = "skip" ]; then echo "Seans dışı — çıkılıyor (mesaj yok)."; exit 0; fi
           case "$W" in ''|*[!0-9]*) echo "Kapı hatası: '$W'"; exit 1;; esac
-          curl -s -o /dev/null -w "keepalive HTTP %{http_code}\n" -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API/enable"
+          for F in trade.yml backtest.yml; do   # ikisi de zamanlanmış → ikisi de 60 gün kuralına tabi
+            curl -s -o /dev/null -w "keepalive $F HTTP %{http_code}\n" -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$WF/$F/enable"
+          done
           if [ "$W" -gt 0 ]; then echo "Açılışa $((W / 60)) dk — bekleniyor."; sleep "$W"; fi
           END=$((T0 + 330 * 60))   # iş zaman aşımı 350 dk; son tarama en geç 330. dk'da başlar
           while :; do
@@ -70,7 +72,7 @@ jobs:
             if [ "$(node bot/gate.mjs "$NEXT")" != "0" ]; then echo "Seans bitti — döngü tamam."; break; fi
             if [ "$NEXT" -gt "$END" ]; then
               echo "Süre sınırı — devam koşusu tetikleniyor."
-              curl -s -o /dev/null -w "dispatch HTTP %{http_code}\n" -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API/dispatches" -d "{\"ref\":\"$GITHUB_REF_NAME\",\"inputs\":{\"mode\":\"loop\"}}"
+              curl -s -o /dev/null -w "dispatch HTTP %{http_code}\n" -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$WF/trade.yml/dispatches" -d "{\"ref\":\"$GITHUB_REF_NAME\",\"inputs\":{\"mode\":\"loop\"}}"
               break
             fi
             sleep 1200
