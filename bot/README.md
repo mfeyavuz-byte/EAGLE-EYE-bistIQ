@@ -38,7 +38,7 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `GIST_ID` | ✅ (AI TRADER için) | boş gist'in ID'si |
 
 ### 4. Test
-Actions → **EAGLE EYE — Otonom Motor Botu** → Run workflow → ~15 sn → Telegram'a sinyaller + (varsa) işlem bildirimi düşer.
+Actions → **EAGLE EYE — Otonom Motor Botu** → Run workflow → ~15 sn → Telegram'a sinyaller (seansta: tarama 15 dk, rapor 30 dk'da bir, yeni AL anında) + (varsa) işlem bildirimi düşer.
 
 ## Yerel test
 ```bash

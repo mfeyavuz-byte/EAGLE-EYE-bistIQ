@@ -84,11 +84,12 @@ async function sendTG(text) {
 // Geçmiş tekrarı (2026-06-16..11-20, 112 işlem günü): SAT 99 günde 15'i aştı (en kötü 2026-10-16: 118 SAT, 103'ü mesajda yoktu);
 // AL hiç aşmadı. Sebep Telegram sınırı DEĞİL (en uzun mesaj ~1.6k krk) — bu kesim. AI TRADER her zaman TÜM sinyalleri kullandı.
 const TOP_N = 15;
-function buildScanMsg(signals, gErr = 0) {
+// motorun stop/hedefi ALIŞ yönlü (stop altta, hedef üstte) → SAT satırında yanıltıcıydı ("SAT … hedef 41.76") → yalnız AL'da
+const sigLine = s => `${s.sym} %${s.confidence} @${s.price}₺${s.breakout ? " 🚀KIRILIM→" + s.boTarget : ""}${s.preMom >= 50 ? " 🔥coil" : ""}${(s.er || 0) >= 0.5 ? " ⚡trend" : ""}${(s.ret60 || 0) >= 15 ? " 📈mom" : ""}${s.signal === "AL" ? ` · stop ${s.stopLoss} · hedef ${s.target1}` : ""}${s.news ? " · " + s.news : ""}`;
+function buildScanMsg(signals, gErr = 0, newSet = null) {   // newSet: bugün İLK KEZ AL olanlar → 🆕
   const _as = s => (s.confidence || 0) + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.ret60 || 0) * 0.3;
   const AL = signals.filter(s => s.signal === "AL").sort((a, b) => _as(b) - _as(a)), SA = signals.filter(s => s.signal === "SAT");
-  // motorun stop/hedefi ALIŞ yönlü (stop altta, hedef üstte) → SAT satırında yanıltıcıydı ("SAT … hedef 41.76") → yalnız AL'da
-  const f = s => `${s.sym} %${s.confidence} @${s.price}₺${s.breakout ? " 🚀KIRILIM→" + s.boTarget : ""}${s.preMom >= 50 ? " 🔥coil" : ""}${(s.er || 0) >= 0.5 ? " ⚡trend" : ""}${(s.ret60 || 0) >= 15 ? " 📈mom" : ""}${s.signal === "AL" ? ` · stop ${s.stopLoss} · hedef ${s.target1}` : ""}${s.news ? " · " + s.news : ""}`;
+  const f = s => (newSet?.has(s.sym) ? "🆕 " : "") + sigLine(s);
   const sec = (title, arr) => !arr.length ? "" : `\n\n${title} (${arr.length})${arr.length > TOP_N ? ` — en güçlü ${TOP_N} ayrıntılı, kalanı altta` : ""}:\n`
     + arr.slice(0, TOP_N).map(f).join("\n")
     + (arr.length > TOP_N ? `\n➕ Diğer ${arr.length - TOP_N}: ` + arr.slice(TOP_N).map(s => s.sym).sort().join(", ") : "");
@@ -682,19 +683,32 @@ async function main() {
   // Telegram komutlarına cevap ver (/durum, /pozisyonlar) — her run
   if (st) await handleCommands(st);
 
-  // ---------- SAAT BAŞI RAPOR (her saat 1 kez; tarama 20+ kez/gün ama mesaj saatlik) ----------
+  // ---------- RAPOR: 30 dk'da bir (tarama 15 dk'da bir; yeni AL ayrıca ANINDA) ----------
   const istHour = +new Date().toLocaleString("en-US", { timeZone: "Europe/Istanbul", hour: "2-digit", hour12: false });
+  const istMin = +new Date().toLocaleString("en-US", { timeZone: "Europe/Istanbul", minute: "2-digit" });
+  const slot = istHour * 2 + (istMin >= 30 ? 1 : 0);   // yarım saat dilimi
   const istDay = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" });   // YYYY-MM-DD (İstanbul)
   // manual = elle "Run workflow" (her seferinde rapor). Döngü koşusu (EAGLE_MODE=loop) workflow_dispatch olsa da saatlik raporlar.
   const manual = (process.env.EAGLE_MODE || (process.env.GITHUB_EVENT_NAME === "workflow_dispatch" ? "manual" : "")) === "manual";
-  // Saat anahtarı GÜN+saat: dünün son raporu 10'daysa bugünün 10:00 (sabah) raporu yutulmasın.
-  // State yoksa (gist erişilemiyor) her 20 dk'da bir mesaj spam'i yerine yaklaşık saatlik: yalnız saatin ilk 20 dk'sındaki tarama.
-  const doReport = manual || (st ? (st.lastReportHour !== istHour || st.lastReportDay !== istDay) : new Date().getMinutes() < 20);
+  // Anahtar GÜN + yarım saat dilimi (dünün son dilimi sabahın raporunu yutmasın). State yoksa (gist erişilemiyor) her taramada
+  // mesaj yerine yaklaşık 30 dk'da bir: yalnız dilimin ilk 15 dk'sındaki tarama.
+  const doReport = manual || (st ? (st.lastReportSlot !== slot || st.lastReportDay !== istDay) : (istMin % 30) < 15);
   let sent = 0;
+  // YENİ AL → rapor beklemeden ANINDA bildir (hisse başına günde 1 kez). Rapor taramasında ayrı mesaj atılmaz, HİSSE TARA'da 🆕.
+  let newSet = null;
+  if (st) {
+    if (!st.alSeen || st.alSeen.d !== istDay) st.alSeen = { d: istDay, s: [] };
+    const seen = new Set(st.alSeen.s), fresh = signals.filter(s => s.signal === "AL" && !seen.has(s.sym));
+    if (fresh.length) {
+      newSet = new Set(fresh.map(s => s.sym)); st.alSeen.s.push(...newSet);
+      if (!doReport && isTradingHours()) { await sendTG(`🔔 YENİ AL SİNYALİ · ${fmtTime()}\n` + fresh.map(sigLine).join("\n") + "\n\n⚠ Yatırım tavsiyesi değildir."); sent++; }
+      if (!doReport) await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });   // rapor taramasında aşağıda zaten kaydedilir
+    }
+  }
 
   if (doReport) {
     // 1) HİSSE TARA — TÜM AL/SAT (en güçlü 15 ayrıntılı + kalanı kısa liste)
-    await sendTG(buildScanMsg(signals, gistErr)); sent++;
+    await sendTG(buildScanMsg(signals, gistErr, newSet)); sent++;
 
     // 2) AI TRADER durumu (saatlik): yeni pozisyon?, açık pozisyonlar + açılıştan beri K/Z
     if (st) {
@@ -709,9 +723,9 @@ async function main() {
       });
       const ho = st.hourOpens || [], hc = st.hourCloses || [];
       let m2 = `📊 AI TRADER — DURUM\n${fmtTime()}\n`;
-      m2 += `\n🆕 Bu saat: ${ho.length ? ho.length + " yeni pozisyon açıldı" : "yeni pozisyon açılmadı"}`;
+      m2 += `\n🆕 Son rapordan beri: ${ho.length ? ho.length + " yeni pozisyon açıldı" : "yeni pozisyon açılmadı"}`;
       if (ho.length) m2 += "\n" + ho.join("\n");
-      if (hc.length) m2 += `\n\n✅ Bu saat ${hc.length} kapanış:\n` + hc.join("\n");
+      if (hc.length) m2 += `\n\n✅ Son rapordan beri ${hc.length} kapanış:\n` + hc.join("\n");
       m2 += `\n\n📌 Açık pozisyonlar (${openLines.length}/5) — açılıştan beri K/Z:\n` + (openLines.join("\n") || "yok");
       m2 += `\n\n💼 Değer: ${Math.round(eq).toLocaleString("tr-TR")}₺ · Nakit: ${Math.round(st.cash).toLocaleString("tr-TR")}₺`;
       m2 += `\n📈 Toplam getiri: ${portRet >= 0 ? "+" : ""}${portRet.toFixed(2)}%`;
@@ -769,12 +783,12 @@ async function main() {
           }
         } catch (e) { console.error("Haber arşivi:", e.message); }
       }
-      st.lastReportHour = istHour; st.lastReportDay = istDay; st.hourOpens = []; st.hourCloses = [];
+      st.lastReportHour = istHour; st.lastReportSlot = slot; st.lastReportDay = istDay; st.hourOpens = []; st.hourCloses = [];
       await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
       console.log(`Rapor gönderildi · değer ~${Math.round(eq)}₺ · getiri ${portRet.toFixed(2)}% · poz ${openLines.length}`);
     }
   } else {
-    console.log(`Saat ${istHour} raporu zaten gönderildi — sessiz tarama/yönetim. Birikim: ${(st?.hourOpens || []).length} açılış, ${(st?.hourCloses || []).length} kapanış.`);
+    console.log(`${istHour}:${istMin >= 30 ? "30" : "00"} dilimi raporu zaten gönderildi — sessiz tarama/yönetim. Birikim: ${(st?.hourOpens || []).length} açılış, ${(st?.hourCloses || []).length} kapanış.`);
   }
 
   console.log(`${sent} Telegram mesajı gönderildi. Toplam ${((Date.now() - t0) / 1e3).toFixed(1)}s`);
@@ -788,4 +802,4 @@ if (import.meta.url === _entry) {
     process.exit(1);
   });
 }
-export { runPaper, heldInfo, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
+export { runPaper, heldInfo, sigLine, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
