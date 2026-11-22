@@ -70,6 +70,14 @@ if (MODE === "both") {
   grokResp = () => { throw new Error("ECONNRESET"); };
   m = await aiDaily(st0(), sigs, false); ok(m?.includes("alınamadı — ECONNRESET") && m.includes("Piyasa temkinli"), "ağ hatası → çökme yok, Gemini yine gelir");
 
+  console.log("Gemini düşünme ayarı / zaman aşımı:");
+  { let n = 0; grokResp = GROK_OK; gemResp = () => (++n === 1 ? J({ error: { code: 400, message: "Unknown name thinkingConfig: thinking is not supported" } }, 400) : GEM_OK()); calls = [];
+    m = await aiDaily(st0(), sigs, false); const gb = gCalls().map(c => c.body.generationConfig);
+    ok(m?.includes("Piyasa temkinli") && gb.length === 2 && gb[0].thinkingConfig?.thinkingBudget === 0 && !gb[1].thinkingConfig, "düşünme kapalı istenir; model reddederse (400) ayarsız tekrar → yorum geldi"); }
+  { gemResp = () => { const e = new Error("This operation was aborted"); e.name = "AbortError"; throw e; }; tg = [];
+    updates = [{ update_id: 30, message: { chat: { id: "c" }, text: "/aitest" } }]; await handleCommands(st0());
+    ok(tg[1]?.includes("Gemini (gemini-flash-latest): ERR zaman aşımı (60 sn)"), "zaman aşımı anlaşılır yazılır: " + (tg[1] || "").split("\n")[1]); gemResp = GEM_OK; }
+
   console.log("AL adayı yok:");
   grokResp = GROK_OK; calls = [];
   m = await aiDaily(st0(), sigs.filter(s => s.signal !== "AL"), false);

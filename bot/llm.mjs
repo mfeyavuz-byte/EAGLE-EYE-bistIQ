@@ -73,15 +73,25 @@ export async function grokXSentiment(symbol, timeout = 45000) {
 // Gemini: serbest metin analiz/yorum (günlük portföy/aday yorumu). Dönüş: string | null
 // Anahtar URL'de değil başlıkta (x-goog-api-key) → log/hata metnine sızmaz. Yeni Flash modelleri "düşünme" token'ı da
 // harcadığı için çıktı tavanı geniş (500'de cevap boş dönebiliyordu); ücretsiz katmanda maliyet yok.
-export async function geminiAdvise(prompt, timeout = 30000) {
+// Gemini çağrısı. "latest" Flash modelleri cevaptan önce DÜŞÜNÜYOR → kısa yorumda gereksiz ve yavaş (2026-11-22 /aitest:
+// 25 sn'de "This operation was aborted"). Düşünme kapatılır (thinkingBudget 0); model bu ayarı reddederse (HTTP 400) ayarsız
+// tekrar denenir. Zaman aşımı 60 sn (Actions'ta tek çağrı/gün; acele yok).
+async function gemini(text, gen = {}, timeout = 60000) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, h = { "x-goog-api-key": GEMINI_KEY };
+  const body = cfg => ({ contents: [{ parts: [{ text }] }], generationConfig: { maxOutputTokens: 2048, ...gen, ...cfg } });
+  let r = await postJSON(url, h, body({ thinkingConfig: { thinkingBudget: 0 } }), timeout);
+  if (!r.ok && r.status === 400 && /thinking/i.test(errMsg(r))) r = await postJSON(url, h, body({}), timeout);
+  return r;
+}
+const abortMsg = e => e?.name === "AbortError" || /aborted/i.test(e?.message || "") ? "zaman aşımı (60 sn) — Google geç cevap verdi" : (e?.message || String(e));
+export async function geminiAdvise(prompt, timeout = 60000) {
   if (!GEMINI_KEY) return null;
   try {
-    const r = await postJSON(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, { "x-goog-api-key": GEMINI_KEY },
-      { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3, maxOutputTokens: 2048 } }, timeout);
+    const r = await gemini(prompt, { temperature: 0.3 }, timeout);
     if (!r.ok) { console.error(`[Gemini] HTTP ${r.status} · ${errMsg(r)}`); return null; }
     const t = r.json?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") || "";
     return t.trim() || null;
-  } catch (e) { console.error("[Gemini]", e.message); return null; }
+  } catch (e) { console.error("[Gemini]", abortMsg(e)); return null; }
 }
 
 // TEŞHİS (/aitest): her anahtarın GERÇEK kullanım yolunu dener (Grok'ta X araması dahil — eskiden sadece "hi" deniyordu,
@@ -90,11 +100,10 @@ export async function llmDiag() {
   const out = { geminiModel: GEMINI_MODEL, grokModel: XAI_MODEL };
   if (!GEMINI_KEY) out.gemini = "secret YOK (repo Secrets → GEMINI_API_KEY)";
   else try {
-    const r = await postJSON(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, { "x-goog-api-key": GEMINI_KEY },
-      { contents: [{ parts: [{ text: "Tek kelimeyle cevap ver: merhaba" }] }], generationConfig: { maxOutputTokens: 2048 } }, 25000);
+    const r = await gemini("Tek kelimeyle cevap ver: merhaba");
     const t = r.json?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("").trim() || "";
     out.gemini = r.ok ? (t ? "OK ✓" : "HTTP 200 ama metin yok (finish: " + (r.json?.candidates?.[0]?.finishReason || "?") + ")") : `HTTP ${r.status} · ${errMsg(r)}`;
-  } catch (e) { out.gemini = "ERR " + e.message; }
+  } catch (e) { out.gemini = "ERR " + abortMsg(e); }
   if (!XAI_KEY) out.grok = "secret YOK (repo Secrets → XAI_API_KEY)";
   else try {
     const g = await grokX("X'te THYAO (Türk Hava Yolları hissesi) hakkında son günün en dikkat çekici gönderisini tek cümleyle Türkçe özetle.", { days: 1, maxTurns: 1 });
