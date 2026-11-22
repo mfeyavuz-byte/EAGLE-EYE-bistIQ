@@ -39,30 +39,63 @@ function isTradingHours() {
 }
 
 // ---------- Telegram ----------
+// Telegram tek mesaj sınırı 4096 karakter; aşan mesaj TAMAMEN reddedilir → satır sınırından ≤3900'lük parçalara böl
+// (3900'den uzun tek satır da kesilmeden parçalanır). Teslim garantisi: Telegram sohbet başına ~1 mesaj/sn ister; peş peşe
+// rapor mesajları "429 Too Many Requests" alabilir → eskiden o parça TEKRAR DENENMEDEN kayboluyordu. Artık: mesajlar arası
+// ≥1 sn (TG_GAP_MS), 429'da Telegram'ın verdiği retry_after kadar bekleyip yeniden dener, 5xx/ağ hatasında da dener (3 deneme).
+let _tgLast = 0;
 async function sendTG(text) {
   if (!TG_TOKEN || !TG_CHAT) { console.log("[TG] yapılandırılmamış"); return false; }
-  // Telegram tek mesaj sınırı 4096 karakter; aşan mesaj TAMAMEN reddedilir (15 AL + 15 SAT'lı HİSSE TARA aşabiliyordu)
-  // → satır sınırından ≤3900'lük parçalara böl.
-  const parts = []; let cur = "";
-  for (const line of String(text).split("\n")) {
+  const LIM = 3900, parts = []; let cur = "";
+  const lines = String(text).split("\n").flatMap(l => l.length > LIM ? l.match(new RegExp(`[\\s\\S]{1,${LIM}}`, "g")) : [l]);
+  for (const line of lines) {
     const add = cur ? cur + "\n" + line : line;
-    if (add.length > 3900 && cur) { parts.push(cur); cur = line; } else cur = add;
+    if (add.length > LIM && cur) { parts.push(cur); cur = line; } else cur = add;
   }
   if (cur) parts.push(cur);
+  const GAP = +(process.env.TG_GAP_MS ?? 1000);
   let ok = true;
   for (const p of parts) {
-    const ctrl = new AbortController(), tid = setTimeout(() => ctrl.abort(), 15000);
-    try {
-      const r = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-        method: "POST", signal: ctrl.signal, headers: { "content-type": "application/json" },
-        body: JSON.stringify({ chat_id: TG_CHAT, text: p.slice(0, 4000), disable_web_page_preview: true }),
-      });
-      if (!r.ok) { ok = false; console.error("[TG] hata", r.status, (await r.text().catch(() => "")).slice(0, 120)); }
-    } catch (e) { ok = false; console.error("[TG]", e.message); }
-    finally { clearTimeout(tid); }
-    if (parts.length > 1) await sleep(300);
+    let done = false;
+    for (let at = 1; at <= 3 && !done; at++) {
+      const wait = _tgLast + GAP - Date.now(); if (wait > 0) await sleep(wait);
+      try {
+        const r = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+          method: "POST", signal: AbortSignal.timeout(15000), headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chat_id: TG_CHAT, text: p, disable_web_page_preview: true }),
+        });
+        _tgLast = Date.now();
+        if (r.ok) { done = true; break; }
+        const j = await r.json().catch(() => ({}));
+        console.error(`[TG] hata ${r.status} (deneme ${at}/3)`, String(j.description || "").slice(0, 120));
+        if (r.status === 429) await sleep(Math.min(+(j.parameters?.retry_after) || 3, 30) * 1000 + 250);
+        else if (r.status < 500) break;                         // 400/401/403: tekrar denemek anlamsız (ör. sohbet yok, token geçersiz)
+        else await sleep(1500 * at);
+      } catch (e) { _tgLast = Date.now(); console.error(`[TG] ${e.message} (deneme ${at}/3)`); await sleep(1500 * at); }
+    }
+    if (!done) ok = false;
   }
   return ok;
+}
+
+// HİSSE TARA mesajı. HİÇBİR AL/SAT KAYBOLMAZ: en güçlü 15'i ayrıntılı, kalanı kısa liste (alfabetik); başlıkta TOPLAM sayı.
+// Eskiden yalnız ilk 15 gösteriliyor, başlıkta da gösterilen sayı ("SAT (15)") yazıyordu → liste tam sanılıyordu.
+// Geçmiş tekrarı (2026-06-16..11-20, 112 işlem günü): SAT 99 günde 15'i aştı (en kötü 2026-10-16: 118 SAT, 103'ü mesajda yoktu);
+// AL hiç aşmadı. Sebep Telegram sınırı DEĞİL (en uzun mesaj ~1.6k krk) — bu kesim. AI TRADER her zaman TÜM sinyalleri kullandı.
+const TOP_N = 15;
+function buildScanMsg(signals, gErr = 0) {
+  const _as = s => (s.confidence || 0) + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.ret60 || 0) * 0.3;
+  const AL = signals.filter(s => s.signal === "AL").sort((a, b) => _as(b) - _as(a)), SA = signals.filter(s => s.signal === "SAT");
+  // motorun stop/hedefi ALIŞ yönlü (stop altta, hedef üstte) → SAT satırında yanıltıcıydı ("SAT … hedef 41.76") → yalnız AL'da
+  const f = s => `${s.sym} %${s.confidence} @${s.price}₺${s.breakout ? " 🚀KIRILIM→" + s.boTarget : ""}${s.preMom >= 50 ? " 🔥coil" : ""}${(s.er || 0) >= 0.5 ? " ⚡trend" : ""}${(s.ret60 || 0) >= 15 ? " 📈mom" : ""}${s.signal === "AL" ? ` · stop ${s.stopLoss} · hedef ${s.target1}` : ""}${s.news ? " · " + s.news : ""}`;
+  const sec = (title, arr) => !arr.length ? "" : `\n\n${title} (${arr.length})${arr.length > TOP_N ? ` — en güçlü ${TOP_N} ayrıntılı, kalanı altta` : ""}:\n`
+    + arr.slice(0, TOP_N).map(f).join("\n")
+    + (arr.length > TOP_N ? `\n➕ Diğer ${arr.length - TOP_N}: ` + arr.slice(TOP_N).map(s => s.sym).sort().join(", ") : "");
+  let m = "🦅 EAGLE EYE — HİSSE TARA (motor)\n" + fmtTime();
+  if (!signals.length) m += "\n\n⚠ Tarama 0 sinyal döndü — Yahoo/veri kaynağı geçici sorun olabilir.";
+  m += sec("📈 AL", AL) + sec("📉 SAT", SA);
+  if (gErr) m += `\n\n⛔ GIST ERİŞİLEMİYOR (HTTP ${gErr}) — ${[401, 403, 404].includes(gErr) ? "GH_GIST_TOKEN süresi dolmuş/geçersiz (veya GIST_ID yanlış): GitHub'da yeni token (gist yetkili) oluştur, repo Settings → Secrets → GH_GIST_TOKEN'ı güncelle." : "geçici olabilir."} Bu sürede AI TRADER işlem yapmaz, komutlar cevaplanmaz; portföy korunur.`;
+  return m + "\n\n⚠ Yatırım tavsiyesi değildir · ~15dk gecikmeli olabilir.";
 }
 
 // ---------- Gist state ----------
@@ -612,16 +645,8 @@ async function main() {
   let sent = 0;
 
   if (doReport) {
-    // 1) HİSSE TARA — güncel en güçlü AL/SAT
-    const _as = s => (s.confidence || 0) + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.ret60 || 0) * 0.3; const al = signals.filter(s => s.signal === "AL").sort((a, b) => _as(b) - _as(a)).slice(0, 15), sa = signals.filter(s => s.signal === "SAT").slice(0, 15);
-    const f = s => `${s.sym} %${s.confidence} @${s.price}₺${s.breakout ? " 🚀KIRILIM→" + s.boTarget : ""}${s.preMom >= 50 ? " 🔥coil" : ""}${(s.er || 0) >= 0.5 ? " ⚡trend" : ""}${(s.ret60 || 0) >= 15 ? " 📈mom" : ""}${s.signal === "AL" ? ` · stop ${s.stopLoss} · hedef ${s.target1}` : ""}${s.news ? " · " + s.news : ""}`;   // motorun stop/hedefi ALIŞ yönlü (stop altta, hedef üstte) → SAT satırında yanıltıcıydı ("SAT … hedef 41.76")
-    let m1 = "🦅 EAGLE EYE — HİSSE TARA (motor)\n" + fmtTime();
-    if (!signals.length) m1 += "\n\n⚠ Tarama 0 sinyal döndü — Yahoo/veri kaynağı geçici sorun olabilir.";
-    if (al.length) m1 += `\n\n📈 EN GÜÇLÜ AL (${al.length}):\n` + al.map(f).join("\n");
-    if (sa.length) m1 += `\n\n📉 SAT (${sa.length}):\n` + sa.map(f).join("\n");
-    if (gistErr) m1 += `\n\n⛔ GIST ERİŞİLEMİYOR (HTTP ${gistErr}) — ${[401, 403, 404].includes(gistErr) ? "GH_GIST_TOKEN süresi dolmuş/geçersiz (veya GIST_ID yanlış): GitHub'da yeni token (gist yetkili) oluştur, repo Settings → Secrets → GH_GIST_TOKEN'ı güncelle." : "geçici olabilir."} Bu sürede AI TRADER işlem yapmaz, komutlar cevaplanmaz; portföy korunur.`;
-    m1 += "\n\n⚠ Yatırım tavsiyesi değildir · ~15dk gecikmeli olabilir.";
-    await sendTG(m1); sent++; await sleep(400);
+    // 1) HİSSE TARA — TÜM AL/SAT (en güçlü 15 ayrıntılı + kalanı kısa liste)
+    await sendTG(buildScanMsg(signals, gistErr)); sent++;
 
     // 2) AI TRADER durumu (saatlik): yeni pozisyon?, açık pozisyonlar + açılıştan beri K/Z
     if (st) {
@@ -664,8 +689,9 @@ async function main() {
         try {
           const pos = await positionScan(syms, idxRows);
           if (pos.length) {
-            let mp = `📅 POZİSYON TARAMA (1-2 ay · Stage-2)\n${fmtTime()}\n\n`
-              + pos.slice(0, 12).map(p => `${p.sym} @${p.price}₺ · skor ${p.score} · RS6a ${p.rs >= 0 ? "+" : ""}${p.rs} · ADX ${p.adx} · RSI ${p.rsi}${p.obvUp ? " · OBV↑" : ""} · stop ${p.stop}`).join("\n");
+            let mp = `📅 POZİSYON TARAMA (1-2 ay · Stage-2) — ${pos.length} aday${pos.length > 12 ? ", en güçlü 12 ayrıntılı" : ""}\n${fmtTime()}\n\n`
+              + pos.slice(0, 12).map(p => `${p.sym} @${p.price}₺ · skor ${p.score} · RS6a ${p.rs >= 0 ? "+" : ""}${p.rs} · ADX ${p.adx} · RSI ${p.rsi}${p.obvUp ? " · OBV↑" : ""} · stop ${p.stop}`).join("\n")
+              + (pos.length > 12 ? `\n➕ Diğer ${pos.length - 12}: ` + pos.slice(12).map(p => p.sym).sort().join(", ") : "");   // sessiz kesim yok
             mp += `\n\n⚠ Sadece bilgi · AI TRADER bunları İŞLEME ALMAZ.`;
             await sendTG(mp); sent++; await sleep(400);
           }
@@ -701,4 +727,4 @@ if (import.meta.url === _entry) {
     process.exit(1);
   });
 }
-export { runPaper, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, mcpEnrich, scanIndices, aiDaily, handleCommands };
+export { runPaper, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };

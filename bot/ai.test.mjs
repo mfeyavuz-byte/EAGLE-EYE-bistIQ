@@ -9,7 +9,7 @@ const MODE = process.argv[2];
 if (!MODE) {
   let bad = 0;
   for (const [mode, env] of [["both", { XAI_API_KEY: "test-xai", GEMINI_API_KEY: "test-gem" }], ["grokOnly", { XAI_API_KEY: "test-xai" }], ["geminiOnly", { GEMINI_API_KEY: "test-gem" }]]) {
-    const e = { ...process.env, TG_TOKEN: "t", TG_CHAT: "c", GH_GIST_TOKEN: "g", GIST_ID: "id", XAI_API_KEY: "", GEMINI_API_KEY: "", ...env };
+    const e = { ...process.env, TG_TOKEN: "t", TG_CHAT: "c", TG_GAP_MS: "0", GH_GIST_TOKEN: "g", GIST_ID: "id", XAI_API_KEY: "", GEMINI_API_KEY: "", ...env };
     const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), mode], { env: e, encoding: "utf8" });
     process.stdout.write(r.stdout); if (r.stderr.trim()) process.stdout.write(r.stderr.split("\n").filter(l => !/^\[(Grok|Gemini)\]/.test(l)).join("\n"));
     if (r.status !== 0) bad++;

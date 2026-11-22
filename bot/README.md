@@ -44,7 +44,7 @@ Actions → **EAGLE EYE — Otonom Motor Botu** → Run workflow → ~15 sn → 
 ```bash
 TG_TOKEN=xxx TG_CHAT=yyy GH_GIST_TOKEN=zzz GIST_ID=www node bot/run.mjs
 ```
-Ağsız testler (hiçbir istek dışarı gitmez): `node bot/runpaper.test.mjs` (AI TRADER zinciri) · `node bot/ai.test.mjs` (Grok/Gemini çıktısı nereye gidiyor: günlük yorum, `/yorum`, `/aitest`, anahtar yok / hata durumları).
+Ağsız testler (hiçbir istek dışarı gitmez): `node bot/runpaper.test.mjs` (AI TRADER zinciri) · `node bot/ai.test.mjs` (Grok/Gemini çıktısı nereye gidiyor: günlük yorum, `/yorum`, `/aitest`, anahtar yok / hata durumları) · `node bot/tg.test.mjs` (HİSSE TARA hiçbir AL/SAT'ı düşürmüyor mu, uzun mesaj bölme, Telegram 429/5xx'te yeniden gönderim).
 
 > ⚠ Yatırım tavsiyesi değildir. Veriler ~15dk gecikmeli olabilir. Sanal portföy gerçek para değildir.
 
