@@ -44,6 +44,7 @@ Actions → **EAGLE EYE — Otonom Motor Botu** → Run workflow → ~15 sn → 
 ```bash
 TG_TOKEN=xxx TG_CHAT=yyy GH_GIST_TOKEN=zzz GIST_ID=www node bot/run.mjs
 ```
+Ağsız testler (hiçbir istek dışarı gitmez): `node bot/runpaper.test.mjs` (AI TRADER zinciri) · `node bot/ai.test.mjs` (Grok/Gemini çıktısı nereye gidiyor: günlük yorum, `/yorum`, `/aitest`, anahtar yok / hata durumları).
 
 > ⚠ Yatırım tavsiyesi değildir. Veriler ~15dk gecikmeli olabilir. Sanal portföy gerçek para değildir.
 
@@ -77,7 +78,7 @@ Anahtar yoksa sessizce atlanır; bot anahtarsız tam çalışır. Eklemek için 
 | Secret | Ne için |
 |---|---|
 | `GEMINI_API_KEY` | Günlük AI yorum (Gemini sentezi). aistudio.google.com → ücretsiz key |
-| `XAI_API_KEY` | `/yorum SEMBOL` → Grok'un X/Twitter gönderilerine göre duyarlılık yorumu. console.x.ai |
+| `XAI_API_KEY` | `/yorum SEMBOL` → Grok'un X/Twitter gönderilerine göre duyarlılık yorumu + günlük AI yorumunda en güçlü AL adayı için ayrı 🐦 satırı (okunan gönderi sayısıyla; hata olursa sebebi yazılır). **Yalnız yorum — alım/satım kararına girmez.** console.x.ai |
 | `XAI_MODEL` / `GEMINI_MODEL` | (ops.) model override; varsayılan `grok-4.7` / `gemini-flash-latest` (gemini-2.0-flash 2026-06'da kapandı; Grok X araması Responses API + `x_search` ile) |
 
 Teşhis: Telegram'da `/aitest` → her anahtarın GERÇEK kullanım yolunu dener (Grok'ta X araması dahil) ve HTTP durumunu yazar.

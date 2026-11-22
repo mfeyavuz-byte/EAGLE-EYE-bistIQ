@@ -51,17 +51,23 @@ async function grokX(prompt, { timeout = 45000, days = 3, maxTurns = 2 } = {}) {
   return { ok: r.ok, status: r.status, json: r.json, text: respText(r.json), posts: r.json?.usage?.server_side_tool_usage_details?.x_posts_fetched, err: r.ok ? "" : errMsg(r) };
 }
 
+// Son Grok hatası (kullanıcıya gösterilir: /yorum ve günlük AI yorumu). Eskiden yalnız konsola yazılıyordu →
+// Telegram'da "geçici sorun" görünüyor, anahtar/model/kota hatası anlaşılmıyordu.
+let _grokErr = "";
+export const grokLastError = () => _grokErr;
+
 // Grok: X (Twitter) aramasıyla bir BIST hissesi hakkında son gönderilere göre duyarlılık + kısa yorum.
-// Dönüş: { score:-2..2, label, ozet, uyari } | null
+// Dönüş: { score:-2..2, label, ozet, uyari, posts } | null   (posts = xAI'nin okuduğu X gönderisi sayısı → arama gerçekten yapıldı mı)
 export async function grokXSentiment(symbol, timeout = 45000) {
-  if (!XAI_KEY) return null;
+  _grokErr = "";
+  if (!XAI_KEY) { _grokErr = "XAI_API_KEY secret'ı yok"; return null; }
   try {
     const g = await grokX(`Sen BIST odaklı, temkinli bir analistsin. X (Twitter) aramasıyla Borsa İstanbul hissesi ${symbol} hakkında son günlerin gönderilerini incele (${symbol}, $${symbol}, #${symbol} ve şirket adıyla ara). Nesnel duyarlılık değerlendir; pump/manipülasyon işaretlerine dikkat et. SADECE şu JSON'u döndür, başka metin yazma: {"score": -2..2 tam sayı, "label": "çok negatif|negatif|nötr|pozitif|çok pozitif", "ozet": "tek cümle Türkçe", "uyari": "manipülasyon/pump şüphesi kısa not, yoksa boş"}`, { timeout });
-    if (!g.ok) { console.error(`[Grok] HTTP ${g.status} · ${g.err}`); return null; }
+    if (!g.ok) { _grokErr = `HTTP ${g.status} · ${g.err}`; console.error(`[Grok] ${_grokErr}`); return null; }
     const o = parseJSONLoose(g.text);
-    if (!o) { console.error("[Grok] cevapta JSON yok:", g.text.slice(0, 120)); return null; }
-    return { score: Math.max(-2, Math.min(2, Math.round(Number(o.score) || 0))), label: o.label || "nötr", ozet: o.ozet || "", uyari: o.uyari || "" };
-  } catch (e) { console.error("[Grok]", e.message); return null; }
+    if (!o) { _grokErr = "cevapta JSON yok: " + (g.text || "(boş)").slice(0, 80); console.error("[Grok]", _grokErr); return null; }
+    return { score: Math.max(-2, Math.min(2, Math.round(Number(o.score) || 0))), label: o.label || "nötr", ozet: o.ozet || "", uyari: o.uyari || "", posts: typeof g.posts === "number" ? g.posts : null };
+  } catch (e) { _grokErr = e?.name === "AbortError" ? "zaman aşımı (45 sn)" : (e?.message || String(e)); console.error("[Grok]", _grokErr); return null; }
 }
 
 // Gemini: serbest metin analiz/yorum (günlük portföy/aday yorumu). Dönüş: string | null
