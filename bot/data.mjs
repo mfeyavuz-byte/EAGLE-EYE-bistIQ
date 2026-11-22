@@ -26,9 +26,35 @@ async function yfetch(sym, interval, range, timeout=8000){
 }
 export const fetch15m = sym => yfetch(sym,'15m','5d');     // (kullanımdan kalktı, dursun)
 export const fetchDaily = sym => yfetch(sym,'1d','2y');    // sinyal: ~500 günlük mum → MA200 geçerli
-export const fetchWeekly = sym => yfetch(sym,'1wk','5y');  // üst trend: haftalık
+// ÜST TREND: haftalık. Yahoo haftalık serinin SONUNA son günlük mumu AYRI bir "hafta" olarak ekliyor (2026-11-22 ölçümü:
+// 195/195 hissede; önceki haftalık mum o günü zaten içeriyor). Motorun haftalık doji/üst-trend hesabı bu 1 günlük sahte mumu
+// hafta sanıyordu (portföy simülatörünün canlı-tekrar doğrulaması yakaladı: AGESA/MAGEN SAT sinyali kayboluyordu).
+// → aynı İstanbul haftasına düşen ardışık mumlar tek muma indirilir (içeriyorsa atılır, içermiyorsa birleştirilir).
+export const fetchWeekly = async sym => dedupWeeks(await yfetch(sym,'1wk','5y'));
+export function dedupWeeks(rows) {
+  const out = [];
+  for (const r of rows) {
+    const p = out[out.length - 1];
+    if (!p || weekKey(p.ts) !== weekKey(r.ts)) { out.push({ ...r }); continue; }
+    if (p.close === r.close && p.high >= r.high && p.low <= r.low) continue;          // saf kopya (gözlenen durum)
+    p.high = Math.max(p.high, r.high); p.low = Math.min(p.low, r.low); p.close = r.close; p.volume = (p.volume || 0) + (r.volume || 0);
+  }
+  return out;
+}
 // Endeks (XU100 vb.) son kapanışı — portföyü endeksle kıyaslamak için
 export async function fetchIndexClose(sym='XU100'){
   const rows = await yfetch(sym,'1d','5d');
   return rows.length ? rows[rows.length-1].close : null;
+}
+
+// GEÇMİŞ TEKRARI İÇİN (backtest + portföy simülatörü): İstanbul (UTC+3, 2016'dan beri yaz saati yok) takvim haftası anahtarı
+// = o haftanın Pazartesi tarihi. weeklyAsOf: i. gün itibarıyla haftalık seri = TAMAMLANMIŞ haftalar (Yahoo) + bu haftanın i. güne
+// kadarki günlüklerinden kısmi mum (canlıdaki gibi; gelecek sızıntısı yok — Yahoo haftalık mumuyla birebir doğrulandı).
+export const istDay = ts => new Date(ts + 3 * 3600e3).toISOString().slice(0, 10);
+export const weekKey = ts => { const d = new Date(ts + 3 * 3600e3), wd = (d.getUTCDay() + 6) % 7; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - wd)).toISOString().slice(0, 10); };
+export function weeklyAsOf(wk, all, i) {
+  const wkI = weekKey(all[i].ts), out = wk.filter(w => weekKey(w.ts) < wkI), part = [];
+  for (let j = i; j >= 0 && weekKey(all[j].ts) === wkI; j--) part.unshift(all[j]);
+  if (part.length) out.push({ ts: part[0].ts, date: '', open: part[0].open, high: Math.max(...part.map(b => b.high)), low: Math.min(...part.map(b => b.low)), close: part[part.length - 1].close, volume: part.reduce((a, b) => a + (b.volume || 0), 0) });
+  return out;
 }

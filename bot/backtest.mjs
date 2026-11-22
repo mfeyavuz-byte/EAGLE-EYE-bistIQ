@@ -6,20 +6,10 @@
 //  ⇒ Sayılar 2026-06-22 tabanıyla (eski gevşek filtre) KIYASLANAMAZ; yeni taban PROJECT.md'de.
 //  (Haber ve MCP katmanı geçmişe dönük üretilemez → dahil değil. scanOne'daki filtre değişirse BURAYI da güncelle.)
 import { enrichData, getHigherTrend, getSignals } from './engine.mjs';
-import { fetchDaily, fetchWeekly } from './data.mjs';
+import { fetchDaily, fetchWeekly, weekKey, weeklyAsOf } from './data.mjs';
 import syms from './symbols.json' with {type:'json'};
 const MIN_CONF=65,MIN_ADX=20,FWD=10;
 const sample=syms.filter((_,i)=>i%5===0).slice(0,40);   // ~40 sembol
-
-// İstanbul (UTC+3, 2016'dan beri yaz saati yok) takvim haftası anahtarı = o haftanın Pazartesi tarihi
-const weekKey=ts=>{const d=new Date(ts+3*3600e3),wd=(d.getUTCDay()+6)%7;return new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()-wd)).toISOString().slice(0,10);};
-// i. gün itibarıyla haftalık seri: tamamlanmış haftalar (Yahoo) + bu haftanın i. güne kadarki günlüklerinden kısmi mum
-function weeklyAsOf(wk,all,i){
-  const wkI=weekKey(all[i].ts), out=wk.filter(w=>weekKey(w.ts)<wkI), part=[];
-  for(let j=i;j>=0&&weekKey(all[j].ts)===wkI;j--)part.unshift(all[j]);
-  if(part.length)out.push({ts:part[0].ts,date:'',open:part[0].open,high:Math.max(...part.map(b=>b.high)),low:Math.min(...part.map(b=>b.low)),close:part[part.length-1].close,volume:part.reduce((a,b)=>a+(b.volume||0),0)});
-  return out;
-}
 
 const istDay=ts=>new Date(ts+3*3600e3).toISOString().slice(0,10);
 const idx=await fetchDaily('XU100'), idxAt=new Map(idx.map((x,k)=>[istDay(x.ts),k]));   // endeks barı = aynı İstanbul günü
