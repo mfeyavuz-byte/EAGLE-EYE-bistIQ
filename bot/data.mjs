@@ -25,7 +25,8 @@ async function yfetch(sym, interval, range, timeout=8000){
   return [];
 }
 export const fetch15m = sym => yfetch(sym,'15m','5d');     // (kullanımdan kalktı, dursun)
-export const fetchDaily = sym => yfetch(sym,'1d','2y');    // sinyal: ~500 günlük mum → MA200 geçerli
+export const fetchDaily = sym => yfetch(sym,'1d','2y');
+export const fetchHourly = sym => yfetch(sym,'60m','2y',20000);   // portföy simülatörü: gerçek gün içi yol (günde ~10 mum)    // sinyal: ~500 günlük mum → MA200 geçerli
 // ÜST TREND: haftalık. Yahoo haftalık serinin SONUNA son günlük mumu AYRI bir "hafta" olarak ekliyor (2026-11-22 ölçümü:
 // 195/195 hissede; önceki haftalık mum o günü zaten içeriyor). Motorun haftalık doji/üst-trend hesabı bu 1 günlük sahte mumu
 // hafta sanıyordu (portföy simülatörünün canlı-tekrar doğrulaması yakaladı: AGESA/MAGEN SAT sinyali kayboluyordu).

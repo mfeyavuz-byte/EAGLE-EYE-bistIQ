@@ -24,6 +24,7 @@ const START = +(process.env.START_CASH || 500000);   // başlangıç sermayesi (
 const MIN_CONF = +(process.env.MIN_CONF || 65);       // sinyal kalite barı (güven); 50→65
 const MIN_ADX = +(process.env.MIN_ADX || 20);         // trend gücü barı (ADX); trendsiz=gürültü
 const SENT_FILE  = "eagle_sent.json";
+const NEWS_ARCH  = "eagle_news_scores.json";   // günlük haber puanı arşivi (ölçüm için)
 const CONC = +(process.env.CONC || 8);
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -314,13 +315,21 @@ async function currentPrice(sym, scanMap) {
   return d.length ? d[d.length - 1].close : null;
 }
 
+// Elde tutulan hisse için zayıflama girdileri (portföy simülatöründeki held() ile AYNI formül): MA20, hacim oranı, RS(60g) − endeks
+async function heldInfo(sym, idxRet60 = 0) {
+  const a = await fetchDaily(sym), j = a.length - 1; if (j < 60) return {};
+  const c = a.slice(j - 19, j + 1), ma20 = c.reduce((x, b) => x + b.close, 0) / 20, v20 = c.reduce((x, b) => x + (b.volume || 0), 0) / 20;
+  return { ma20, volR: v20 > 0 ? (a[j].volume || 0) / v20 : 0, rs: (a[j].close - a[j - 59].close) / a[j - 59].close * 100 - idxRet60 };
+}
 async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = {}) {
   const today = (_test && _test.today) || new Date().toISOString().slice(0, 10);   // _test.today: portföy simülatörünün günü
   // Çıkış ayarları. Varsayılanlar = CANLI davranış; yalnız portföy simülatörü _test.cfg ile senaryo dener
   // (beR: başabaşı +%2 yerine ilk riskin (2×ATR) katında yap · sigExitDip:false → dip kurulumunu SAT sinyali kapatmaz).
-  const cfg = { beR: null, sigExitDip: true, failExit: false, weakExit: false, bearMode: "leader",   // 2026-11-22 simülasyon: düşüşte dip yerine LİDER (iki yol varsayımında da tabanı geçti)
+  const cfg = { beR: null, sigExitDip: true, failExit: false, weakExit: true, bearMode: "dip",   // 2026-11-22 SAATLİK simülasyon: dip + zayıflama çıkışı iki yolda da eski kodu geçti; lider karışıktı → geri alındı
     ...((_test && _test.cfg) || {}) };
   const atClose = !_test || _test.isClose !== false;   // simülatör gün içi noktalarda false verir
+  // zayıflama çıkışı simülasyondaki gibi KAPANIŞA YAKIN değerlendirilir (17:30 sonrası; gün içi kısmi hacimle erken tetiklenmesin)
+  const nearClose = _test ? atClose : (() => { const p = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()); return +p.find(x => x.type === "hour").value * 60 + +p.find(x => x.type === "minute").value >= 1050; })();
   let st = _test && "state" in _test ? _test.state : await gistGet(PAPER_FILE, null);
   // KRİTİK: Gist okunamadıysa (geçici hata) state'i BİLMİYORUZ → bu run'ı ATLA, ASLA sıfırlama/yazma.
   if (st === READ_FAILED) {
@@ -401,7 +410,12 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
     const hitTIME = daysHeld >= 14 && Math.abs(pct) < 0.02;
     const sm = scanMap[sym];   // DENEY çıkışları (cfg; canlıda kapalı)
     const hitFAIL = cfg.failExit && atClose && !ps.pyr && daysHeld >= 1 && daysHeld <= 3 && cur < ps.entry * 0.99;
-    const hitWEAK = cfg.weakExit && atClose && sm?.ma20 > 0 && cur < sm.ma20 && (sm.volR || 0) > 1.2 && (sm.rs ?? 0) < -5;   // ÖLÜ PARA: 14 günde kıpırdamadı → sermayeyi boşalt
+    // ZAYIFLAMA: o gün sinyali OLMAYAN pozisyon MA20 altına hacimle (>1.2×) kapanıyor ve endeksten belirgin zayıf (RS<−5) → çık
+    let hitWEAK = false;
+    if (cfg.weakExit && nearClose && (!sm || sm.signal === "NÖTR")) {
+      const hi = sm?.ma20 != null ? sm : (_test ? {} : await heldInfo(sym, mkt.idxRet60 || 0));
+      hitWEAK = hi.ma20 > 0 && cur < hi.ma20 && (hi.volR || 0) > 1.2 && (hi.rs ?? 0) < -5;
+    }   // ÖLÜ PARA: 14 günde kıpırdamadı → sermayeyi boşalt
     if (hitSL || hitTS || hitSIG || hitTP || hitTIME || hitFAIL || hitWEAK) {
       const reason = hitSL ? (ps.sl === ps.entry ? "BE" : "SL") : hitTS ? "TS" : hitSIG ? "SIG" : hitTP ? "TP" : hitFAIL ? "FAIL" : hitWEAK ? "WEAK" : "ZAMAN";
       const label = { SL: "Zarar Durdur", BE: "Başabaş (kâr korundu)", TS: "Trailing Stop", SIG: "SAT sinyali", TP: "Hedef", ZAMAN: "Ölü para (zaman stopu)", FAIL: "Başarısız kırılım", WEAK: "Zayıflama" }[reason];
@@ -660,7 +674,7 @@ async function main() {
   let st = null;
   if (GIST_ID && GIST_TOKEN) {
     // MCP olay/analist/temel katmanı — yalnız en güçlü 6 AL adayı (hız + fail-safe; bot sunucu-tarafı, CORS yok)
-    st = await runPaper(signals, xuNow, bearRegime, null, { breadth, volScale });
+    st = await runPaper(signals, xuNow, bearRegime, null, { breadth, volScale, idxRet60: mc.idxRet60 });
   } else {
     console.log("⚠ Gist yok — AI TRADER atlandı (state kalıcı olmadan paper trading her çalışmada sıfırlanır). GH_GIST_TOKEN + GIST_ID secret'larını ekle.");
   }
@@ -742,6 +756,19 @@ async function main() {
           else console.log("⚠ Endeks taraması boş döndü (MCP) — eski eagle_index.json korunuyor.");
         } catch (e) { console.error("Endeks tarama:", e.message); }
       }
+      // HABER PUANI ARŞİVİ — günde 1 kayıt (gün içinde son rapor kazanır), son 180 gün. Amaç: ileride "haber puanı kazandırıyor mu"
+      // ölçülebilsin (geçmiş haber saklanmıyordu → hiç ölçülemiyordu). Gist okunamazsa YAZILMAZ (mevcut arşiv ezilmesin).
+      if (Object.keys(newsScores).length) {
+        try {
+          const ar = await gistGet(NEWS_ARCH, { days: {} });
+          if (ar !== READ_FAILED && ar && typeof ar === "object") {
+            ar.days = ar.days || {};
+            ar.days[istDay] = Object.fromEntries(Object.entries(newsScores).filter(([, v]) => Math.abs(v) >= 0.05).map(([k, v]) => [k, +v.toFixed(2)]));
+            const ks = Object.keys(ar.days).sort(); for (const k of ks.slice(0, Math.max(0, ks.length - 180))) delete ar.days[k];
+            await gistPut({ [NEWS_ARCH]: { content: JSON.stringify(ar) } });
+          }
+        } catch (e) { console.error("Haber arşivi:", e.message); }
+      }
       st.lastReportHour = istHour; st.lastReportDay = istDay; st.hourOpens = []; st.hourCloses = [];
       await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
       console.log(`Rapor gönderildi · değer ~${Math.round(eq)}₺ · getiri ${portRet.toFixed(2)}% · poz ${openLines.length}`);
@@ -761,4 +788,4 @@ if (import.meta.url === _entry) {
     process.exit(1);
   });
 }
-export { runPaper, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
+export { runPaper, heldInfo, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };

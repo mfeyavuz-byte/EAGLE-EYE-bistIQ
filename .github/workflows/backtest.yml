@@ -10,7 +10,7 @@ on:
 jobs:
   backtest:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,8 +24,11 @@ jobs:
           set +e
           OUT=$(node bot/backtest.mjs 2>&1)
           echo "$OUT"
+          # Portföy simülatörü: BUGÜNKÜ kural setiyle son 12 ay, gerçek saatlik gün içi yol (strateji bozuluyor mu → erken uyarı)
+          SIM=$(timeout 30m node bot/portfolio-sim.mjs 12ay --saatlik --ozet 2>&1 | tail -4)
+          echo "$SIM"
           if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
-            MSG=$(printf '📐 HAFTALIK BACKTEST\n%s' "$OUT")
+            MSG=$(printf '📐 HAFTALIK BACKTEST\n%s\n\n📊 PORTFÖY SİMÜLASYONU (bugünkü kurallar, son 12 ay)\n%s' "$OUT" "$SIM")
             curl -s "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
               --data-urlencode "chat_id=${TG_CHAT}" \
               --data-urlencode "text=${MSG}" > /dev/null

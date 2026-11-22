@@ -54,8 +54,8 @@ console.log("SENARYO 2 (düşüş rejimi):");
     { ...sig("LEAD", "AL", 50, { sl: 48, tp: 56, atr: 1 }), leader: true },   // endeksten güçlü + MA50 üstü
   ];
   const st = await runPaper(signals, 14000, true, { state, forceTrading: true });
-  ok(st.pos.LEAD, "düşüş rejiminde LİDER açıldı");
-  ok(!st.pos.DIPC && !st.pos.TRNC, "düşüş rejiminde dip ve lider olmayan ELENDİ (simülasyon: dip iki yolda da zararda)");
+  ok(st.pos.DIPC, "düşüş rejiminde DİP açıldı");
+  ok(!st.pos.TRNC && !st.pos.LEAD, "düşüş rejiminde dip olmayan (lider dahil) ELENDİ");
 }
 
 // ---------- SENARYO 3: kurulum öğrenme — net-zararlı kurulum açılmaz ----------
@@ -93,6 +93,18 @@ console.log("SENARYO 5 (kurulum soğuması: kalıcı kilit yok):");
   const { setupPauses } = await import("./run.mjs");
   const p = setupPauses(losers(10), today);
   ok(p.dip && p.dip.pnl10 === -4000 && p.dip.daysLeft === 20, "durum mesajı için: son 10 K/Z " + p.dip?.pnl10 + "₺ · " + p.dip?.daysLeft + " gün kaldı");
+}
+
+// ---------- SENARYO 6: zayıflama çıkışı (sinyalsiz pozisyon MA20 altı + hacim + RS<−5) ----------
+console.log("SENARYO 6 (zayıflama çıkışı):");
+{
+  const mk = () => ({ cash: 400000, start: 500000, pos: { WEAKX: { lot: 100, entry: 50, sl: 40, tp: 70, peak: 0, atr: 2, date: today, setup: "trend" } }, trades: [], dayKey: today, dayStart: 405000, startDate: today, xuStart: 14000, equityLog: [] });
+  const go = async (x, isClose = true) => (await runPaper([{ sym: "WEAKX", signal: "NÖTR", confidence: 0, price: 48, ...x }], 14000, false, { state: mk(), forceTrading: true, isClose })).pos.WEAKX;
+  ok(!(await go({ ma20: 50, volR: 1.5, rs: -8 })), "MA20 altı + hacim 1.5× + RS −8 → ZAYIFLAMA ile kapandı");
+  ok(!!(await go({ ma20: 50, volR: 1.0, rs: -8 })), "hacim yoksa (1.0×) kapanmaz");
+  ok(!!(await go({ ma20: 50, volR: 1.5, rs: -2 })), "endeksten zayıf değilse (RS −2) kapanmaz");
+  ok(!!(await go({ ma20: 50, volR: 1.5, rs: -8 }, false)), "gün içi noktada (kapanış değil) kapanmaz");
+  ok(!!(await go({ signal: "AL", ma20: 50, volR: 1.5, rs: -8 })), "o gün AL sinyali varsa zayıflama sayılmaz");
 }
 
 console.log(fail ? `\n❌ ${fail} ASSERT BAŞARISIZ` : "\n✅ TÜM ENTEGRASYON TESTLERİ GEÇTİ");
