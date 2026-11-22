@@ -751,9 +751,10 @@ async function main() {
         try {
           const pos = await positionScan(syms, idxRows);
           if (pos.length) {
-            let mp = `📅 POZİSYON TARAMA (1-2 ay · Stage-2) — ${pos.length} aday${pos.length > 12 ? ", en güçlü 12 ayrıntılı" : ""}\n${fmtTime()}\n\n`
+            let mp = `📅 TUTUŞ LİSTESİ — haftalık (~5 gün) & aylık (~1 ay) · Stage-2 — ${pos.length} aday${pos.length > 12 ? ", en güçlü 12 ayrıntılı" : ""}\n${fmtTime()}\n\n`
               + pos.slice(0, 12).map(p => `${p.sym} @${p.price}₺ · skor ${p.score} · RS6a ${p.rs >= 0 ? "+" : ""}${p.rs} · ADX ${p.adx} · RSI ${p.rsi}${p.obvUp ? " · OBV↑" : ""} · stop ${p.stop}`).join("\n")
               + (pos.length > 12 ? `\n➕ Diğer ${pos.length - 12}: ` + pos.slice(12).map(p => p.sym).sort().join(", ") : "");   // sessiz kesim yok
+            mp += `\n\n📏 Ölçüm (son 12 ay, 2026-11, bot/hold-backtest.mjs): bu listedeki hisseler piyasayı 5 günde ort. +%0.9, 21 günde +%2.3 geçti (iki yarıda da pozitif). Ayrı haftalık kurallar (geri çekilme, kırılım) piyasayı geçmedi → haftalık ve aylık için en iyi aday bu liste.`;
             mp += `\n\n⚠ Sadece bilgi · AI TRADER bunları İŞLEME ALMAZ.`;
             await sendTG(mp); sent++; await sleep(400);
           }
