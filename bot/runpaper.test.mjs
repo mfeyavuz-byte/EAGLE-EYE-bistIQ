@@ -50,11 +50,12 @@ console.log("SENARYO 2 (düşüş rejimi):");
   const state = { cash: 500000, start: 500000, pos: {}, trades: [], dayKey: today, dayStart: 500000, startDate: today, xuStart: 14000, equityLog: [] };
   const signals = [
     sig("DIPC", "AL", 30, { sl: 28, tp: 36, atr: 1, dip: 3 }),   // dip → açılmalı
-    sig("TRNC", "AL", 40, { sl: 38, tp: 48, atr: 1, dip: 0 }),   // momentum → elenmeli
+    sig("TRNC", "AL", 40, { sl: 38, tp: 48, atr: 1, dip: 0 }),   // lider olmayan momentum → elenmeli
+    { ...sig("LEAD", "AL", 50, { sl: 48, tp: 56, atr: 1 }), leader: true },   // endeksten güçlü + MA50 üstü
   ];
   const st = await runPaper(signals, 14000, true, { state, forceTrading: true });
-  ok(st.pos.DIPC, "düşüş rejiminde DİP açıldı");
-  ok(!st.pos.TRNC, "düşüş rejiminde momentum (dip değil) ELENDİ");
+  ok(st.pos.LEAD, "düşüş rejiminde LİDER açıldı");
+  ok(!st.pos.DIPC && !st.pos.TRNC, "düşüş rejiminde dip ve lider olmayan ELENDİ (simülasyon: dip iki yolda da zararda)");
 }
 
 // ---------- SENARYO 3: kurulum öğrenme — net-zararlı kurulum açılmaz ----------
@@ -84,7 +85,7 @@ console.log("SENARYO 5 (kurulum soğuması: kalıcı kilit yok):");
   const ago = d => new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
   const losers = d => Array.from({ length: 11 }, () => ({ setup: "dip", pnl: -400, sym: "X", close: ago(d) }));
   const run = async trades => (await runPaper([sig("DIPZ", "AL", 30, { sl: 28, tp: 36, atr: 1, dip: 3 })], 14000, true,
-    { state: { cash: 500000, start: 500000, pos: {}, trades, dayKey: today, dayStart: 500000, startDate: today, xuStart: 14000, equityLog: [] }, forceTrading: true })).pos.DIPZ;
+    { state: { cash: 500000, start: 500000, pos: {}, trades, dayKey: today, dayStart: 500000, startDate: today, xuStart: 14000, equityLog: [] }, forceTrading: true, cfg: { bearMode: "dip" } })).pos.DIPZ;
   ok(!(await run(losers(10))), "zararlı 'dip' son işlemi 10 gün önce → DURDURULDU (düşüş rejiminde dip açılmadı)");
   ok(!!(await run(losers(40))), "son işlemi 40 gün önce → soğuma bitti, küçük riskle YENİDEN DENENDİ (eski kod: kalıcı kilit)");
   const mixed = [...Array.from({ length: 10 }, () => ({ setup: "dip", pnl: 150, sym: "Y", close: ago(3) })), { setup: "dip", pnl: -60000, sym: "Z", close: ago(200) }, { setup: "dip", pnl: -60000, sym: "Z", close: ago(201) }];

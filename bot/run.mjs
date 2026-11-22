@@ -153,6 +153,21 @@ async function scanOne(sym, io = { fetchDaily, fetchWeekly }) {
   const _tightB = _blo > 0 && (_bhi - _blo) / _blo < 0.40, breakout = (_tightB && last.close > _bhi * 1.005 && (last.volume || 0) > avgVol * 1.3) ? 1 : 0, boTarget = breakout ? +(_bhi + (_bhi - _blo)).toFixed(2) : null;
   const weekly = await io.fetchWeekly(sym);                            // ÜST TREND = haftalık
   const k = getSignals(ed, getHigherTrend(weekly), weekly);
+  const aboveMa50 = !!(last.ma50 && last.close > last.ma50);
+  // TOBO (ters omuz-baş-omuz) boyun kırılımı — DENEY (yalnız simülatör io.opts.tobo; canlıda kapalı)
+  if (io.opts?.tobo) {
+    const w = daily.slice(-70, -1), n = w.length;
+    if (n >= 40) {
+      let h = 10; for (let j = 10; j < n - 8; j++) if (w[j].low < w[h].low) h = j;
+      const lo = (a, b) => Math.min(...w.slice(a, b).map(x => x.low)), head = w[h].low, ls = lo(0, h - 4), rsh = lo(h + 5, n), neck = Math.max(...w.slice(h, n).map(x => x.high));
+      if (ls > head * 1.03 && rsh > head * 1.03 && neck / head < 1.35 && last.close > neck && (last.volume || 0) > avgVol * 1.3) {
+        const base = { sym, signal: "AL", confidence: Math.max(70, k?.final === "AL" ? k.confidence : 0), price: last.close, dip: 0, tobo: 1, atr: (last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol), er: _er, preMom, rets20: _rs20, breakout: 1, boTarget: +(neck + (neck - head)).toFixed(2),
+          stopLoss: +rsh.toFixed(2), target1: +(neck + (neck - head)).toFixed(2), mod: "TOBO", adx: Math.round(k?.adx || 0), htf: k?.higherTrend, ret60: +ret60.toFixed(1), aboveMa50 };
+        base.rr = last.close > rsh ? +((base.target1 - last.close) / (last.close - rsh)).toFixed(2) : 0;
+        return base;
+      }
+    }
+  }
   if (!k || k.final === "NÖTR") return null;
   // KALİTE FİLTRESİ — daha isabetli, daha az gürültü. DİP DÖNÜŞLER muaf (karşı-trend doğrulanmış giriş).
   const isDip = !!k.dipSignal;
@@ -164,7 +179,7 @@ async function scanOne(sym, io = { fetchDaily, fetchWeekly }) {
   if (!isDip && k.final === "AL" && (last.volume || 0) < avgVol * 0.7) return null; // hacim kuruması = teyitsiz AL
   if (!isDip && k.final === "AL" && (last.rsi || 0) >= 63) return null; // aşırı-alımda/geç girişi ele (backtest: erken giriş %42 vs geç %34)
   return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol), er: _er, preMom, rets20: _rs20, breakout, boTarget,
-           stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend, ret60: +ret60.toFixed(1), rr: (k.target1 && k.stopLoss && last.close > k.stopLoss) ? +((k.target1 - last.close) / (last.close - k.stopLoss)).toFixed(2) : 0 };
+           stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend, ret60: +ret60.toFixed(1), aboveMa50, rr: (k.target1 && k.stopLoss && last.close > k.stopLoss) ? +((k.target1 - last.close) / (last.close - k.stopLoss)).toFixed(2) : 0 };
 }
 async function scanAll(io) {   // io verilmezse canlı Yahoo (scanOne varsayılanı)
   const out = [];
@@ -178,7 +193,7 @@ async function scanAll(io) {   // io verilmezse canlı Yahoo (scanOne varsayıla
 
 // ---------- Kurulum (setup) etiketi + performans öğrenme ----------
 // Her AL adayını kurulum tipine etiketle; kapanan işlemlerden tip-bazlı beklenti ölç.
-function setupOf(s) { return s.dip ? "dip" : (s.htf === "YUKARI" ? "trend" : "counter"); }
+function setupOf(s) { return s.tobo ? "tobo" : s.dip ? "dip" : (s.htf === "YUKARI" ? "trend" : "counter"); }
 function setupStats(trades) {
   const m = {};
   for (const t of trades || []) { const k = t.setup || "?"; (m[k] = m[k] || { n: 0, w: 0, pnl: 0 }); m[k].n++; if ((t.pnl || 0) > 0) m[k].w++; m[k].pnl += (t.pnl || 0); }
@@ -303,7 +318,9 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
   const today = (_test && _test.today) || new Date().toISOString().slice(0, 10);   // _test.today: portföy simülatörünün günü
   // Çıkış ayarları. Varsayılanlar = CANLI davranış; yalnız portföy simülatörü _test.cfg ile senaryo dener
   // (beR: başabaşı +%2 yerine ilk riskin (2×ATR) katında yap · sigExitDip:false → dip kurulumunu SAT sinyali kapatmaz).
-  const cfg = { beR: null, sigExitDip: true, ...((_test && _test.cfg) || {}) };
+  const cfg = { beR: null, sigExitDip: true, failExit: false, weakExit: false, bearMode: "leader",   // 2026-11-22 simülasyon: düşüşte dip yerine LİDER (iki yol varsayımında da tabanı geçti)
+    ...((_test && _test.cfg) || {}) };
+  const atClose = !_test || _test.isClose !== false;   // simülatör gün içi noktalarda false verir
   let st = _test && "state" in _test ? _test.state : await gistGet(PAPER_FILE, null);
   // KRİTİK: Gist okunamadıysa (geçici hata) state'i BİLMİYORUZ → bu run'ı ATLA, ASLA sıfırlama/yazma.
   if (st === READ_FAILED) {
@@ -381,10 +398,13 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
     // TAM KAPAMA: stop(breakeven dahil) / trailing / SAT sinyali / (kısmi yapılmadıysa hedef)
     const hitSL = ps.sl && cur <= ps.sl, hitTS = !!trailLv && cur <= trailLv, hitSIG = satSet.has(sym) && (cfg.sigExitDip || ps.setup !== "dip");
     const hitTP = !ps.partial && ps.tp && cur >= ps.tp;
-    const hitTIME = daysHeld >= 14 && Math.abs(pct) < 0.02;   // ÖLÜ PARA: 14 günde kıpırdamadı → sermayeyi boşalt
-    if (hitSL || hitTS || hitSIG || hitTP || hitTIME) {
-      const reason = hitSL ? (ps.sl === ps.entry ? "BE" : "SL") : hitTS ? "TS" : hitSIG ? "SIG" : hitTP ? "TP" : "ZAMAN";
-      const label = { SL: "Zarar Durdur", BE: "Başabaş (kâr korundu)", TS: "Trailing Stop", SIG: "SAT sinyali", TP: "Hedef", ZAMAN: "Ölü para (zaman stopu)" }[reason];
+    const hitTIME = daysHeld >= 14 && Math.abs(pct) < 0.02;
+    const sm = scanMap[sym];   // DENEY çıkışları (cfg; canlıda kapalı)
+    const hitFAIL = cfg.failExit && atClose && !ps.pyr && daysHeld >= 1 && daysHeld <= 3 && cur < ps.entry * 0.99;
+    const hitWEAK = cfg.weakExit && atClose && sm?.ma20 > 0 && cur < sm.ma20 && (sm.volR || 0) > 1.2 && (sm.rs ?? 0) < -5;   // ÖLÜ PARA: 14 günde kıpırdamadı → sermayeyi boşalt
+    if (hitSL || hitTS || hitSIG || hitTP || hitTIME || hitFAIL || hitWEAK) {
+      const reason = hitSL ? (ps.sl === ps.entry ? "BE" : "SL") : hitTS ? "TS" : hitSIG ? "SIG" : hitTP ? "TP" : hitFAIL ? "FAIL" : hitWEAK ? "WEAK" : "ZAMAN";
+      const label = { SL: "Zarar Durdur", BE: "Başabaş (kâr korundu)", TS: "Trailing Stop", SIG: "SAT sinyali", TP: "Hedef", ZAMAN: "Ölü para (zaman stopu)", FAIL: "Başarısız kırılım", WEAK: "Zayıflama" }[reason];
       const pnl = +((cur - ps.entry) * ps.lot).toFixed(0), pnlPct = +(pct * 100).toFixed(2);
       st.cash += ps.lot * cur;
       st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: ps.lot, pnl, pnlPct, open: ps.date, close: today, reason, setup: ps.setup || "?", feat: ps.feat });
@@ -418,7 +438,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
   const ddOK = !st.dayStart || (equity - st.dayStart) / st.dayStart > -0.03;
   const disabled = disabledSetups(st.trades, today);  // ampirik: son 10'u net-zararlı kurulumu 30 gün durdur (soğuma)
   let candidates = signals.filter(s => s.signal === "AL" && !st.pos[s.sym] && !disabled.has(setupOf(s)) && !s.blackout && !s.weakFund);
-  if (defensive) candidates = candidates.filter(s => s.dip);   // düşüş/zayıf-genişlik → SADECE dip
+  if (defensive) candidates = cfg.bearMode === "none" ? [] : cfg.bearMode === "leader" ? candidates.filter(s => s.leader) : candidates.filter(s => s.dip);   // düşüş/zayıf-genişlik → SADECE dip
   candidates = candidates
     .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 + (s.rr || 0) * 3 + (s.rs || 0) * 0.8 + (s.secStrong ? 5 : 0) + (s.dip ? s.dip * 2.5 : 0) + (s.ret60 || 0) * 0.3 + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.breakout || 0) * 15 }))   // güven+potansiyel+R:R+göreli güç+sektör+dip(backtest:en iyi kenar)
     .sort((a, b) => b._score - a._score);
@@ -579,7 +599,7 @@ function marketContext(signals, idxRows, xuNow) {
   for (const s of signals) { const sec = sectorOf(s.sym); if (sec) { secRS[sec] = (secRS[sec] || 0) + s.rs; secN[sec] = (secN[sec] || 0) + 1; } }
   const secAvg = Object.fromEntries(Object.keys(secRS).map(k => [k, secRS[k] / secN[k]]));
   const _sv = Object.values(secAvg).sort((a, b) => b - a); const _med = _sv.length ? _sv[Math.floor(_sv.length / 2)] : 0;
-  for (const s of signals) { const sec = sectorOf(s.sym); s.secStrong = !!(sec && secAvg[sec] != null && secAvg[sec] >= _med); }
+  for (const s of signals) { const sec = sectorOf(s.sym); s.secStrong = !!(sec && secAvg[sec] != null && secAvg[sec] >= _med); s.leader = s.signal === "AL" && s.rs >= 5 && !!s.aboveMa50; }
   return { signals, bearRegime, breadth, volScale, idxRet60, xuMA200, sd, rsCut: n0 - signals.length };
 }
 

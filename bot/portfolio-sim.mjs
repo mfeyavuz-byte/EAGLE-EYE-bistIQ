@@ -26,9 +26,10 @@ const bar = (s, day) => { const a = D[s] || [], j = upto(a, day); return j < 0 ?
 
 // --- 1) Her günün sinyalleri (bir kez; tüm senaryolar aynı sinyalleri kullanır) ---
 console.log(`Sinyaller yeniden üretiliyor: ${days.length} işlem günü (${days[0]} → ${days.at(-1)})…`);
+async function buildDays(opts) {
 const DAY = {};
 for (const day of days) {
-  const io = {
+  const io = { opts,
     fetchDaily: async s => { const a = D[s] || [], j = upto(a, day); return j < 0 ? [] : a.slice(0, j + 1); },
     fetchWeekly: async s => { const a = D[s] || [], j = upto(a, day); return j < 0 ? [] : weeklyAsOf(W[s] || [], a, j); },
   };
@@ -37,16 +38,24 @@ for (const day of days) {
   const mc = marketContext(sig, ir, xuNow);
   DAY[day] = { signals: mc.signals, mc, xuNow, nAL: sig.filter(s => s.signal === "AL").length, nSAT: sig.filter(s => s.signal === "SAT").length };
 }
+// genişlik patlaması: AL oranı ≤%10'dan 10 gün içinde ≥%40'a → 20 gün düşüş rejimini kaldır (DENEY)
+let on = -1; days.forEach((d, i) => { const b = DAY[d].mc.breadth; if (b >= 0.4 && days.slice(Math.max(0, i - 10), i).some(x => DAY[x].mc.breadth <= 0.1)) on = i; DAY[d].thrust = on >= 0 && i - on < 20; });
+return DAY;
+}
+const DAY = await buildDays({}), DAYT = SCEN_NEED_TOBO() ? await buildDays({ tobo: true }) : null;
+function SCEN_NEED_TOBO() { return true; }
 const L = DAY[days.at(-1)];
 console.log(`Doğrulama (son gün ${days.at(-1)}): ${L.nAL + L.nSAT} sinyal (${L.nAL} AL, ${L.nSAT} SAT) · XU100 ${L.xuNow} vs MA200 ${L.mc.xuMA200?.toFixed(0)} · genişlik %${Math.round(L.mc.breadth * 100)} · risk ölçeği ${L.mc.volScale} — canlı taramayla aynı olmalı`);
 
 // --- 2) Senaryolar ---
 const SCEN = [
-  ["A", "Günde 1 kontrol (seyrek çalışma — eski zamanlama gibi)", false, {}],
-  ["B", "20 dk'lık bot — BUGÜNKÜ KOD (karşılaştırma tabanı)", true, {}],
-  ["C", "B + dip kurulumunu SAT sinyali kapatmaz", true, { sigExitDip: false }],
-  ["D", "B + başabaş +%2 yerine 1R'de (ilk risk kadar kârda)", true, { beR: 1 }],
-  ["E", "B + C + D birlikte", true, { sigExitDip: false, beR: 1 }],
+  ["B", "BUGÜNKÜ KOD (taban)", true, {}],
+  ["F", "düşüş rejiminde HİÇ alım yok", true, { bearMode: "none" }],
+  ["G", "düşüş rejiminde yalnız LİDER (RS≥5, MA50 üstü)", true, { bearMode: "leader" }],
+  ["H", "başarısız kırılım çıkışı (3 gün içinde girişin %1 altı)", true, { failExit: true }],
+  ["I", "zayıflama çıkışı (MA20 altı + hacim + RS<−5)", true, { weakExit: true }],
+  ["J", "TOBO kurulumu eklendi", true, {}, "tobo"],
+  ["K", "genişlik patlaması → savunmadan erken çıkış", true, {}, "thrust"],
 ];
 const pathPrice = (b, k, N) => {
   if (N === 1) return b.close;
@@ -55,21 +64,30 @@ const pathPrice = (b, k, N) => {
   const si = Math.floor((k - 1) / STEPS), f = ((k - 1) % STEPS + 1) / STEPS, [p, q] = seg[si];
   return +(p + (q - p) * f).toFixed(4);
 };
+// elde tutulan (sinyalsiz) hisse için zayıflama çıkışının girdileri: MA20, hacim oranı, RS
+function held(s, day, mc) {
+  const a = D[s] || [], j = upto(a, day); if (j < 60) return {};
+  const c = a.slice(j - 19, j + 1), ma20 = c.reduce((x, b) => x + b.close, 0) / 20, v20 = c.reduce((x, b) => x + (b.volume || 0), 0) / 20;
+  const ret60 = (a[j].close - a[j - 59].close) / a[j - 59].close * 100;
+  return { ma20, volR: v20 > 0 ? (a[j].volume || 0) / v20 : 0, rs: ret60 - mc.idxRet60 };
+}
 const realFetch = globalThis.fetch; let leaks = 0;
-async function simulate(cfg, intraday) {
+async function simulate(cfg, intraday, mode) {
+  const DD = mode === "tobo" ? DAYT : DAY;
   globalThis.fetch = async u => { leaks++; throw new Error("simülasyonda ağ KAPALI: " + u); };   // ikinci güvenlik katmanı
   const log = console.log; console.log = (...a) => { if (!String(a[0]).startsWith("[TG]")) log(...a); };
   let st = { cash: START, start: START, pos: {}, trades: [], dayKey: null, dayStart: START, startDate: days[0], xuStart: null, equityLog: [], lastReportHour: -1, hourOpens: [], hourCloses: [], tgOffset: 0 };
   const N = intraday ? 1 + 3 * STEPS : 1, bearDays = { n: 0 };
   try {
     for (const day of days) {
-      const { signals, mc, xuNow } = DAY[day];
-      if (mc.bearRegime) bearDays.n++;
+      const { signals, mc, xuNow, thrust } = DD[day];
+      const bear = mc.bearRegime && !(mode === "thrust" && thrust);
+      if (bear) bearDays.n++;
       for (let k = 0; k < N; k++) {
         const last = k === N - 1;
         const sigs = last ? signals.map(s => ({ ...s })) : [];
-        for (const s of Object.keys(st.pos)) if (!sigs.some(x => x.sym === s)) { const b = bar(s, day); if (b) sigs.push({ sym: s, signal: "NÖTR", confidence: 0, price: pathPrice(b, k, N) }); }
-        st = await runPaper(sigs, xuNow, mc.bearRegime, { state: st, forceTrading: true, today: day, cfg }, { breadth: mc.breadth, volScale: mc.volScale });
+        for (const s of Object.keys(st.pos)) if (!sigs.some(x => x.sym === s)) { const b = bar(s, day); if (b) sigs.push({ sym: s, signal: "NÖTR", confidence: 0, price: pathPrice(b, k, N), ...(last ? held(s, day, mc) : {}) }); }
+        st = await runPaper(sigs, xuNow, bear, { state: st, forceTrading: true, today: day, cfg, isClose: last }, { breadth: mc.breadth, volScale: mc.volScale });
       }
       st.hourOpens = []; st.hourCloses = [];
     }
@@ -80,7 +98,7 @@ async function simulate(cfg, intraday) {
 
 const xu0 = DAY[days[0]].xuNow, xu1 = L.xuNow, fmt = n => Math.round(n).toLocaleString("tr-TR");
 const res = [];
-for (const [id, label, intraday, cfg] of SCEN) res.push({ id, label, ...(await simulate(cfg, intraday)) });
+for (const [id, label, intraday, cfg, mode] of SCEN) res.push({ id, label, ...(await simulate(cfg, intraday, mode)) });
 console.log(`\nSONUÇ${REV ? " (TERS gün içi yol)" : ""} — ${days[0]} → ${days.at(-1)} (${days.length} işlem günü · ${res[0].bearDays} gün düşüş rejimi) · başlangıç ${fmt(START)}₺ · aynı dönem XU100 %${((xu1 - xu0) / xu0 * 100).toFixed(1)}`);
 console.log("Sen. | Son değer   | Getiri  | Max DD | İşlem | İsabet | PF   | Beklenti/işlem | Açık poz");
 for (const r of res) {
