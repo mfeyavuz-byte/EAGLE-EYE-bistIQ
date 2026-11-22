@@ -150,11 +150,25 @@ function setupStats(trades) {
   for (const t of trades || []) { const k = t.setup || "?"; (m[k] = m[k] || { n: 0, w: 0, pnl: 0 }); m[k].n++; if ((t.pnl || 0) > 0) m[k].w++; m[k].pnl += (t.pnl || 0); }
   return m;
 }
-// ≥10 kapanan işlemde net zararda olan kurulumları otomatik durdur (ampirik budama)
-function disabledSetups(trades) {
-  const out = new Set();
-  for (const [k, v] of Object.entries(setupStats(trades))) if (v.n >= 10 && v.pnl < 0) out.add(k);
+// AMPİRİK BUDAMA + SOĞUMA: ≥10 kapanan işlemi olan ve SON 10 işlemi net zararda olan kurulum, son işleminin kapanışından
+// itibaren COOL_DAYS gün durur; sonra küçük riskle (riskMult 0.6) yeniden denenir. Yeni deneme de zarar ederse yine durur.
+// Eskiden süresizdi: kapalı kurulum işlem açmadığı için yeni veri hiç gelmiyor → bir kez kapanan ASLA geri açılmıyordu
+// (2026-11: trend Temmuz'dan, dip Ağustos'tan kilitliydi → düşüş rejiminde yalnız dip açılabildiği için AI TRADER hiç işlem açamıyordu).
+const COOL_DAYS = 30;
+function setupPauses(trades, today = new Date().toISOString().slice(0, 10)) {
+  const by = {}, out = {};
+  for (const t of trades || []) (by[t.setup || "?"] = by[t.setup || "?"] || []).push(t);
+  for (const [k, arr] of Object.entries(by)) {
+    if (arr.length < 10) continue;
+    const last10 = [...arr].sort((a, b) => String(b.close || "").localeCompare(String(a.close || ""))).slice(0, 10);   // en yeni 10
+    const pnl10 = last10.reduce((a, t) => a + (t.pnl || 0), 0);
+    const ago = (Date.parse(today) - Date.parse(last10[0].close)) / 864e5;   // tarih yoksa NaN → güvenli taraf: durdur
+    if (pnl10 < 0 && !(ago >= COOL_DAYS)) out[k] = { pnl10: Math.round(pnl10), daysLeft: isFinite(ago) ? Math.ceil(COOL_DAYS - ago) : COOL_DAYS };
+  }
   return out;
+}
+function disabledSetups(trades, today) {
+  return new Set(Object.keys(setupPauses(trades, today)));
 }
 
 // PORTFÖY YÖNETİCİSİ (anahtarsız, kural-tabanlı): kurulumun GERÇEK beklentisine göre risk çarpanı
@@ -364,7 +378,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
   const MAXCOST = 0.30;                               // tek pozisyon en fazla portföyün %30'u
   const upside = s => (s.target1 && s.price) ? (s.target1 - s.price) / s.price * 100 : 0;
   const ddOK = !st.dayStart || (equity - st.dayStart) / st.dayStart > -0.03;
-  const disabled = disabledSetups(st.trades);         // ampirik: net-zararlı kurulumları durdur
+  const disabled = disabledSetups(st.trades, today);  // ampirik: son 10'u net-zararlı kurulumu 30 gün durdur (soğuma)
   let candidates = signals.filter(s => s.signal === "AL" && !st.pos[s.sym] && !disabled.has(setupOf(s)) && !s.blackout && !s.weakFund);
   if (defensive) candidates = candidates.filter(s => s.dip);   // düşüş/zayıf-genişlik → SADECE dip
   candidates = candidates
@@ -635,6 +649,8 @@ async function main() {
       m2 += `\n🌐 Rejim: ${bearRegime ? "DÜŞÜŞ — savunma" : "NORMAL"} · genişlik %${Math.round(breadth * 100)} · risk ölçeği ${volScale}${st.eqRisk < 1 ? " · 🛡 kısık (eq MA20 altı)" : ""}`;
       const ss = setupStats(st.trades);
       if (Object.keys(ss).length) m2 += "\n🧪 Kurulum (kazanan/toplam): " + Object.entries(ss).map(([k, v]) => `${k} ${v.w}/${v.n}${v.pnl ? ` (${v.pnl >= 0 ? "+" : ""}${Math.round(v.pnl)}₺)` : ""}`).join(" · ");
+      const pz = Object.entries(setupPauses(st.trades, st.dayKey));   // neden işlem açılmıyor? → görünür olsun
+      if (pz.length) m2 += "\n⏸ Durdurulan kurulum: " + pz.map(([k, v]) => `${k} (son 10 işlem ${v.pnl10}₺ · ${v.daysLeft} gün sonra küçük riskle yeniden denenir)`).join(" · ");
       await sendTG(m2); sent++; await sleep(400);
       // Günde 1 kez performans özeti (beklenti/drawdown/Sharpe/kurulum)
       if (st.lastPerfDay !== st.dayKey && (st.trades || []).length) { await sendTG(perfReport(st)); sent++; st.lastPerfDay = st.dayKey; await sleep(400); }
@@ -685,4 +701,4 @@ if (import.meta.url === _entry) {
     process.exit(1);
   });
 }
-export { runPaper, perfStats, setupStats, disabledSetups, riskMult, setupOf, sendTG, mcpEnrich, scanIndices, aiDaily, handleCommands };
+export { runPaper, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, mcpEnrich, scanIndices, aiDaily, handleCommands };

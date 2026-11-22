@@ -78,5 +78,21 @@ console.log("SENARYO 4 (yeni gün: günlük zarar freni bugünün değerine bağ
   ok(st.pos.FRSH, "yeni günün ilk taramasında alım ENGELLENMEDİ");
 }
 
+// ---------- SENARYO 5: budama SOĞUMASI — kapanan kurulum 30 gün sonra yeniden denenir (eskiden kalıcı kilit) ----------
+console.log("SENARYO 5 (kurulum soğuması: kalıcı kilit yok):");
+{
+  const ago = d => new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+  const losers = d => Array.from({ length: 11 }, () => ({ setup: "dip", pnl: -400, sym: "X", close: ago(d) }));
+  const run = async trades => (await runPaper([sig("DIPZ", "AL", 30, { sl: 28, tp: 36, atr: 1, dip: 3 })], 14000, true,
+    { state: { cash: 500000, start: 500000, pos: {}, trades, dayKey: today, dayStart: 500000, startDate: today, xuStart: 14000, equityLog: [] }, forceTrading: true })).pos.DIPZ;
+  ok(!(await run(losers(10))), "zararlı 'dip' son işlemi 10 gün önce → DURDURULDU (düşüş rejiminde dip açılmadı)");
+  ok(!!(await run(losers(40))), "son işlemi 40 gün önce → soğuma bitti, küçük riskle YENİDEN DENENDİ (eski kod: kalıcı kilit)");
+  const mixed = [...Array.from({ length: 10 }, () => ({ setup: "dip", pnl: 150, sym: "Y", close: ago(3) })), { setup: "dip", pnl: -60000, sym: "Z", close: ago(200) }, { setup: "dip", pnl: -60000, sym: "Z", close: ago(201) }];
+  ok(!!(await run(mixed)), "eski büyük zararlar + SON 10 işlem kârda → açık (eski kod: toplam K/Z negatif → kilit)");
+  const { setupPauses } = await import("./run.mjs");
+  const p = setupPauses(losers(10), today);
+  ok(p.dip && p.dip.pnl10 === -4000 && p.dip.daysLeft === 20, "durum mesajı için: son 10 K/Z " + p.dip?.pnl10 + "₺ · " + p.dip?.daysLeft + " gün kaldı");
+}
+
 console.log(fail ? `\n❌ ${fail} ASSERT BAŞARISIZ` : "\n✅ TÜM ENTEGRASYON TESTLERİ GEÇTİ");
 process.exit(fail ? 1 : 0);
