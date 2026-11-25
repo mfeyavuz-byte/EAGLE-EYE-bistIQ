@@ -13,18 +13,22 @@ const { scanAll, marketContext, runPaper, perfStats } = await import("./run.mjs"
 const { fetchDaily, fetchWeekly, fetchHourly, istDay, weeklyAsOf } = await import("./data.mjs");
 const { default: syms } = await import("./symbols.json", { with: { type: "json" } });
 
-const ARGS = process.argv.slice(2), REV = ARGS.includes("--ters-yol"), HOURLY = ARGS.includes("--saatlik"), OZET = ARGS.includes("--ozet"), START = 500000, STEPS = 4;
+const ARGS = process.argv.slice(2), OFF = Object.fromEntries(((ARGS.find(a => a.startsWith("--off=")) || "").slice(6)).split(",").filter(Boolean).map(k => [k, 1])), CACHE = (ARGS.find(a => a.startsWith("--cache=")) || "").slice(8), REV = ARGS.includes("--ters-yol"), HOURLY = ARGS.includes("--saatlik"), OZET = ARGS.includes("--ozet"), START = 500000, STEPS = 4;
 const FROM = ARGS.find(a => /^\d{4}-\d{2}-\d{2}$/.test(a)) || (ARGS.includes("12ay") ? new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10) : "2026-06-16");   // segment başına 4 nokta → günde 13 kontrol
 
 console.log(`Veri çekiliyor (${syms.length} hisse × günlük+haftalık + XU100)…`);
 const D = {}, W = {};
-const HB = {};   // --saatlik: hisse → (gün → saatlik mumlar)
-for (let b = 0; b < syms.length; b += 8) await Promise.all(syms.slice(b, b + 8).map(async s => {
-  [D[s], W[s]] = await Promise.all([fetchDaily(s), fetchWeekly(s)]);
-  if (HOURLY) { const m = new Map(); for (const h of await fetchHourly(s)) { const d = istDay(h.ts); (m.get(d) || m.set(d, []).get(d)).push(h); } HB[s] = m; }
-}));
+const HB = {}, HR = {};   // --saatlik: hisse → (gün → saatlik mumlar)
+// --cache=dosya: veriyi bir kez çek, diske yaz; sonraki koşular oradan okur (paralel sadeleştirme testi Yahoo'yu yormasın)
+const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
+if (CACHE && existsSync(CACHE)) { const c = JSON.parse(readFileSync(CACHE, "utf8")); Object.assign(D, c.D); Object.assign(W, c.W); Object.assign(HR, c.HR || {}); }
+else {
+  for (let b = 0; b < syms.length; b += 8) await Promise.all(syms.slice(b, b + 8).map(async s => { [D[s], W[s]] = await Promise.all([fetchDaily(s), fetchWeekly(s)]); if (HOURLY) HR[s] = await fetchHourly(s); }));
+  if (CACHE) writeFileSync(CACHE, JSON.stringify({ D, W, HR, IDX: await fetchDaily("XU100") }));
+}
+if (HOURLY) for (const s of syms) { const m = new Map(); for (const h of HR[s] || []) { const d = istDay(h.ts); (m.get(d) || m.set(d, []).get(d)).push(h); } HB[s] = m; }
 if (HOURLY) console.log(`Saatlik veri: ${Object.values(HB).filter(m => m.size).length}/${syms.length} hisse`);
-const IDX = await fetchDaily("XU100");
+const IDX = CACHE && existsSync(CACHE) ? JSON.parse(readFileSync(CACHE, "utf8")).IDX : await fetchDaily("XU100");
 const days = IDX.map(x => istDay(x.ts)).filter(d => d >= FROM);
 if (days.length < 5) { console.log("Yeterli gün yok."); process.exit(1); }
 const upto = (a, day) => { let j = -1; for (let k = (a || []).length - 1; k >= 0; k--) if (istDay(a[k].ts) <= day) { j = k; break; } return j; };
@@ -35,13 +39,13 @@ console.log(`Sinyaller yeniden üretiliyor: ${days.length} işlem günü (${days
 async function buildDays(opts) {
 const DAY = {};
 for (const day of days) {
-  const io = { opts,
+  const io = { opts: { ...opts, off: OFF },
     fetchDaily: async s => { const a = D[s] || [], j = upto(a, day); return j < 0 ? [] : a.slice(0, j + 1); },
     fetchWeekly: async s => { const a = D[s] || [], j = upto(a, day); return j < 0 ? [] : weeklyAsOf(W[s] || [], a, j); },
   };
   const sig = await scanAll(io);
   const ir = IDX.slice(0, upto(IDX, day) + 1), xuNow = ir.at(-1)?.close ?? null;
-  const mc = marketContext(sig, ir, xuNow);
+  const mc = marketContext(sig, ir, xuNow, OFF);
   DAY[day] = { signals: mc.signals, mc, xuNow, nAL: sig.filter(s => s.signal === "AL").length, nSAT: sig.filter(s => s.signal === "SAT").length };
 }
 // genişlik patlaması: AL oranı ≤%10'dan 10 gün içinde ≥%40'a → 20 gün düşüş rejimini kaldır (DENEY)

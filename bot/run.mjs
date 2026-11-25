@@ -146,7 +146,8 @@ async function scanOne(sym, io = { fetchDaily, fetchWeekly }) {
   const _ago = daily[Math.max(0, daily.length - 60)]; const ret60 = _ago ? (last.close - _ago.close) / _ago.close * 100 : 0;
   // Likidite: günlük ortalama işlem hacmi (son 20 gün) × fiyat < 5M TL ise ele
   const avgVol = daily.slice(-20).reduce((a, b) => a + (b.volume || 0), 0) / Math.min(20, daily.length);
-  if (avgVol * last.close < 5e6) return null;
+  const off = io.opts?.off || {};   // SADELEŞTİRME TESTİ (yalnız simülatör): kapatılan filtreler; canlıda boş
+  if (!off.liq && avgVol * last.close < 5e6) return null;
   const _cl = daily.slice(-21).map(b => b.close); const _er = _cl.length > 1 ? +(Math.abs(_cl[_cl.length - 1] - _cl[0]) / (_cl.reduce((a, c, k) => k ? a + Math.abs(c - _cl[k - 1]) : 0, 0) || 1)).toFixed(2) : 0;
   const _p10 = ed[ed.length - 11], _r10 = _p10 ? (last.close - _p10.close) / _p10.close * 100 : 0, _obvUp = (last.obv != null && _p10 && _p10.obv != null) ? last.obv > _p10.obv : false;
   const _aa = ed.slice(-60).map(c => c.atr).filter(x => x > 0), _atrAvg = _aa.length ? _aa.reduce((a, b) => a + b, 0) / _aa.length : 0, _atrLow = (last.atr > 0 && _atrAvg > 0) ? last.atr < _atrAvg * 0.85 : false;
@@ -174,13 +175,13 @@ async function scanOne(sym, io = { fetchDaily, fetchWeekly }) {
   if (!k || k.final === "NÖTR") return null;
   // KALİTE FİLTRESİ — daha isabetli, daha az gürültü. DİP DÖNÜŞLER muaf (karşı-trend doğrulanmış giriş).
   const isDip = !!k.dipSignal;
-  if (k.confidence < MIN_CONF) return null;                                 // zayıf sinyalleri ele (varsayılan 65)
-  if (!isDip && (k.adx || 0) < MIN_ADX) return null;                        // trendsiz/choppy gürültü (dip hariç)
-  if (!isDip && (k.htfNote || "").includes("⚠")) return null;               // üst zaman dilimi çelişkili (dip hariç)
-  if (!isDip && k.final === "AL" && k.higherTrend === "ASAGI") return null; // düşen trende momentum-AL yok (dip hariç)
-  if (k.final === "SAT" && k.higherTrend === "YUKARI") return null;         // yükselen trende karşı SATMA
-  if (!isDip && k.final === "AL" && (last.volume || 0) < avgVol * 0.7) return null; // hacim kuruması = teyitsiz AL
-  if (!isDip && k.final === "AL" && (last.rsi || 0) >= 63) return null; // aşırı-alımda/geç girişi ele (backtest: erken giriş %42 vs geç %34)
+  if (!off.conf && k.confidence < MIN_CONF) return null;                                 // zayıf sinyalleri ele (varsayılan 65)
+  if (!off.adx && !isDip && (k.adx || 0) < MIN_ADX) return null;                        // trendsiz/choppy gürültü (dip hariç)
+  if (!off.htf && !isDip && (k.htfNote || "").includes("⚠")) return null;               // üst zaman dilimi çelişkili (dip hariç)
+  if (!off.asagi && !isDip && k.final === "AL" && k.higherTrend === "ASAGI") return null; // düşen trende momentum-AL yok (dip hariç)
+  if (!off.yukari && k.final === "SAT" && k.higherTrend === "YUKARI") return null;         // yükselen trende karşı SATMA
+  if (!off.vol && !isDip && k.final === "AL" && (last.volume || 0) < avgVol * 0.7) return null; // hacim kuruması = teyitsiz AL
+  if (!off.rsi && !isDip && k.final === "AL" && (last.rsi || 0) >= 63) return null; // aşırı-alımda/geç girişi ele (backtest: erken giriş %42 vs geç %34)
   return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol), er: _er, preMom, rets20: _rs20, breakout, boTarget,
            stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend, ret60: +ret60.toFixed(1), aboveMa50, rr: (k.target1 && k.stopLoss && last.close > k.stopLoss) ? +((k.target1 - last.close) / (last.close - k.stopLoss)).toFixed(2) : 0 };
 }
@@ -609,7 +610,7 @@ async function handleCommands(st, ctx = {}) {   // ctx: { signals, bearRegime } 
 // PİYASA BAĞLAMI — main() ve portföy simülatörü AYNI kodu kullanır: rejim (XU100 < MA200 → savunma), genişlik (AL oranı),
 // piyasa vol ölçeği, göreli güç (RS vs XU100 60g) + zayıf-RS AL elemesi (dip hariç), sektör gücü. Sinyaller yerinde
 // zenginleşir (rs, secStrong); filtrelenmiş dizi döner.
-function marketContext(signals, idxRows, xuNow) {
+function marketContext(signals, idxRows, xuNow, off = {}) {   // off.rs: yalnız sadeleştirme testi
   const idxRet60 = idxRows.length >= 60 ? (idxRows[idxRows.length - 1].close - idxRows[idxRows.length - 60].close) / idxRows[idxRows.length - 60].close * 100 : 0;
   const _xc = idxRows.map(r => r.close);
   const xuMA200 = _xc.length >= 200 ? _xc.slice(-200).reduce((a, b) => a + b, 0) / 200 : null;
@@ -622,7 +623,7 @@ function marketContext(signals, idxRows, xuNow) {
   const volScale = +Math.max(0.5, Math.min(1.3, sd > 0 ? 0.20 / sd : 1)).toFixed(2);
   for (const s of signals) s.rs = +((s.ret60 || 0) - idxRet60).toFixed(1);   // endekse göre fazla getiri
   const n0 = signals.length;
-  signals = signals.filter(s => s.signal !== "AL" || s.dip || s.rs > -3);     // endeksten belirgin zayıf AL'ı ele (dip hariç)
+  if (!off.rs) signals = signals.filter(s => s.signal !== "AL" || s.dip || s.rs > -3);     // endeksten belirgin zayıf AL'ı ele (dip hariç)
   // Sektör gücü: ortalama RS'in medyan üstündeki sektörler "güçlü"
   const secRS = {}, secN = {};
   for (const s of signals) { const sec = sectorOf(s.sym); if (sec) { secRS[sec] = (secRS[sec] || 0) + s.rs; secN[sec] = (secN[sec] || 0) + 1; } }
