@@ -821,7 +821,8 @@ async function main() {
   // ANINDA UYARILAR (seans içinde her tarama): takip listesi tetiği + kapanışa yakın model portföy stop'u
   if (st && isTradingHours()) {
     try { sent += await watchAlerts(signals, bearRegime, st); dirty = true; } catch (e) { console.error("Tetik uyarısı:", e.message); }
-    if (istHour * 60 + istMin >= 1050 && st.mpStopDay !== istDay) { try { sent += await mpStops(st); st.mpStopDay = istDay; dirty = true; } catch (e) { console.error("Model stop:", e.message); } }
+    // 17:30 sonrası HER taramada (kapanışa en yakın fiyat); uyarılan hisse st.mp.stopped'da → tekrar yok
+    if (istHour * 60 + istMin >= 1050) { try { sent += await mpStops(st); dirty = true; } catch (e) { console.error("Model stop:", e.message); } }
   }
   if (st && dirty && !doReport) await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });   // rapor taramasında aşağıda kaydedilir
 
