@@ -63,5 +63,18 @@ console.log("sendTG — hız sınırı (sohbet başına ~1 mesaj/sn):");
   const gaps = at.slice(1).map((t, i) => t - at[i]);
   ok(gaps.every(g => g >= 290), `ardışık mesajlar arası ≥ TG_GAP_MS: ${gaps.join(", ")} ms (varsayılan 1000)`);
 }
+console.log("Takip listesi TETİK uyarısı (alttan üste geçiş, günde 1):");
+{
+  process.env.TG_GAP_MS = "0"; const { watchAlerts, _setWatchCache } = await import("./run.mjs"); const got = [];
+  globalThis.fetch = async (u, o) => { got.push(JSON.parse(o.body).text); return J({ ok: true }); };
+  const W = hit => [{ sym: "YEOTK", c: 27, trig: { t: "ma50", hit, text: "MA50 26.85₺ üstüne çıktı" } }, { sym: "ASTOR", c: 150, trig: { t: "ma20", hit: true, text: "MA20 üstü" } }];
+  const st = { watchPrev: { YEOTK: "ma50:0", ASTOR: "hi20:0" } };
+  _setWatchCache(W(true)); let n = await watchAlerts([], false, st);
+  ok(n === 1 && got.length === 1 && got[0].includes("YEOTK @27₺: MA50 26.85₺ üstüne çıktı") && !got[0].includes("ASTOR"), "YEOTK alttan üste geçti → uyarı · ASTOR tetik TÜRÜ değişti (hi20→ma20) → uyarı YOK");
+  _setWatchCache(W(false)); await watchAlerts([], false, st); _setWatchCache(W(true)); n = await watchAlerts([], false, st);
+  ok(n === 0 && got.length === 1, "aynı gün tekrar alttan üste geçse de ikinci uyarı YOK (günde 1)");
+  const st2 = {}; _setWatchCache(W(true)); n = await watchAlerts([], false, st2);
+  ok(n === 0 && st2.watchPrev.YEOTK === "ma50:1", "ilk kez görülen (önceki durum yok) → uyarı yok, sadece kaydedilir");
+}
 console.log(fail ? `\n❌ ${fail} BAŞARISIZ` : "\n✅ TÜM TELEGRAM TESTLERİ GEÇTİ");
 process.exit(fail ? 1 : 0);

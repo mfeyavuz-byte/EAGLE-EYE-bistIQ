@@ -36,9 +36,10 @@ export function buildModels(data, idx) {
   return { bear, xu: idx[xi].close, x200, monthly: pick([S, L, F], 8), quarterly: pick([L, F], 10) };
 }
 
-export function modelMsg(m, when) {
-  const fmt = arr => { const w = +(100 / arr.length).toFixed(1); return arr.map((x, i) => `${i + 1}. ${x.sym} @${x.price}₺ · %${w} · ${x.tag} · RS6a ${x.rs >= 0 ? "+" : ""}${x.rs}${x.vol != null ? ` · oynaklık %${x.vol}` : ""} · stop ${x.stop}`).join("\n"); };
+export function modelMsg(m, when, perf = "") {
+  const fmt = arr => { const w = +(100 / arr.length).toFixed(1); return arr.map((x, i) => `${i + 1}. ${x.sym} @${x.price}₺ · %${w} · ${x.tag} · RS6a ${x.rs >= 0 ? "+" : ""}${x.rs}${x.vol != null ? ` · oynaklık %${x.vol}` : ""} · stop ${x.stop}${x.earn != null && x.earn <= 3 ? ` · ⚠ bilanço ${x.earn} gün` : ""}`).join("\n"); };
   let t = `💼 MODEL PORTFÖY — bu haftanın en iyi seçimi\n${when}\n\n🌐 Piyasa: XU100 ${m.xu} · MA200 ${m.x200 ? Math.round(m.x200) : "?"} → ${m.bear ? "düşüş trendi (stop'lara sadık kal)" : "yükseliş trendi"}`;
+  if (perf) t += "\n\n" + perf;
   t += `\n\n🗓 AYLIK MODEL — ${m.monthly.length} hisse, eşit ağırlık (~1 ay tut)\nSeçim: Stage-2 trend lideri; yetmezse düşük oynaklıklı güçlü, sonra endeksten en güçlü · sektör ≤2\n` + fmt(m.monthly);
   t += `\n\n📆 3 AYLIK MODEL — ${m.quarterly.length} hisse, eşit ağırlık (~3 ay tut)\nSeçim: MA200 üstü + endeksten güçlü + en düşük oynaklık; yetmezse endeksten en güçlü · sektör ≤2\n` + fmt(m.quarterly);
   t += "\n\n📏 Ölçüm (son 12 ay, her Pazartesi kurulan portföy): aylık seçim piyasa ortalamasını ayda ort. +%2.0 geçti. 3 aylıkta test edilen hiçbir yöntem piyasayı geçmedi; bu seçim en az kayıplısı → stop'lara uy.";

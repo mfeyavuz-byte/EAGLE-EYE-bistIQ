@@ -619,30 +619,66 @@ function marketContext(signals, idxRows, xuNow) {
   return { signals, bearRegime, breadth, volScale, idxRet60, xuMA200, sd, rsCut: n0 - signals.length };
 }
 
-// ---------- TAKİP LİSTESİ (kullanıcının hisseleri) — her raporda AYRI mesaj ----------
+// Bilanço (kazanç) açıklamasına kalan gün — hisse başına günde 1 MCP sorgusu (st.earnC önbelleği); hata → null (fail-safe)
+async function earnDays(sym, st) {
+  const d = new Date().toISOString().slice(0, 10);
+  if (st) { if (!st.earnC || st.earnC.d !== d) st.earnC = { d, m: {} }; if (sym in st.earnC.m) return st.earnC.m[sym]; }
+  let v = null;
+  try { const e = await mcpCall("get_earnings", { symbol: sym, market: "bist" }); if (e?.next_earnings_date) { const n = Math.round((Date.parse(e.next_earnings_date) - Date.now()) / 864e5); if (n >= 0) v = n; } } catch {}
+  if (st) st.earnC.m[sym] = v;
+  return v;
+}
+const earnTag = n => n != null && n <= 3 ? ` · ⚠ bilanço ${n} gün` : "";
+
+// ---------- TAKİP LİSTESİ (kullanıcının hisseleri) — her raporda AYRI mesaj + tetik geçilince ANINDA uyarı ----------
 // Kural botun kendisi: yalnız kalite filtrelerini geçen canlı sinyal AL/SAT sayılır; diğerleri BEKLE + tetik/destek seviyeleri.
 const WATCH = (process.env.WATCH || "YEOTK,EUPWR,GESAN,ASTOR").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
-async function watchMsg(signals, bearRegime) {
+let _wCache = null;   // bir çalışmada tek hesap (uyarı + rapor aynı veriyi kullanır)
+async function watchEval(signals, bearRegime, st) {
+  if (_wCache) return _wCache;
   const out = [];
   for (const sym of WATCH) {
     try {
-      const d = await fetchDaily(sym); if (d.length < 60) { out.push(`${sym}: veri alınamadı`); continue; }
+      const d = await fetchDaily(sym); if (d.length < 60) { out.push({ sym, text: `${sym}: veri alınamadı` }); continue; }
       const w = await fetchWeekly(sym), ed = enrichData(d), e = ed[ed.length - 1], k = getSignals(ed, getHigherTrend(w), w);
       const j = d.length - 1, c = d[j].close, prev = d.slice(Math.max(0, j - 20), j), hi20 = Math.max(...prev.map(b => b.high)), lo20 = Math.min(...prev.map(b => b.low));
       const ma20 = d.slice(j - 19, j + 1).reduce((x, b) => x + b.close, 0) / 20, live = signals.find(s => s.sym === sym);
       const trend = e.ma50 && e.ma200 ? (c > e.ma50 && e.ma50 > e.ma200 ? "yükseliş" : c < e.ma50 && e.ma50 < e.ma200 ? "düşüş" : "yatay/karışık") : "belirsiz";
-      let head, plan;
+      let head, plan, trig = null;   // trig: { t: tür, hit: geçildi mi, text }
       if (live?.signal === "AL") { head = `🟢 AL (bot sinyali · güven %${live.confidence})`; plan = `Giriş ~${c}₺ · stop ${live.stopLoss} · hedef ${live.target1}${bearRegime && !live.dip ? " · ⚠ düşüş rejimi: AI TRADER yalnız dip alıyor, küçük pozisyon" : ""}`; }
-      else if (live?.signal === "SAT") { head = `🔴 SAT (bot sinyali · güven %${live.confidence})`; plan = `Elde varsa çık/azalt, yeni alım yok. İlk dönüş teyidi: MA20 ${ma20.toFixed(2)}₺ üstü kapanış (güçlü teyit ${hi20}₺).`; }
-      else {
+      else if (live?.signal === "SAT") { head = `🔴 SAT (bot sinyali · güven %${live.confidence})`; plan = `Elde varsa çık/azalt, yeni alım yok. İlk dönüş teyidi: MA20 ${ma20.toFixed(2)}₺ üstü kapanış (güçlü teyit ${hi20}₺).`; trig = { t: "ma20", hit: c > ma20, text: `MA20 ${ma20.toFixed(2)}₺ üstüne çıktı (SAT'tan ilk dönüş teyidi)` }; }
+      else if (trend === "düşüş" && e.ma50) {
         head = `⚪ BEKLE${k && k.final !== "NÖTR" ? ` (motor ${k.final} %${k.confidence}, kalite filtresini geçmedi)` : ""}`;
-        plan = trend === "düşüş" ? `Düşüş trendinde alım yok; önce MA50 ${e.ma50.toFixed(2)}₺ üstü kapanış gerekir. Destek 20g dip ${lo20}₺.`
-          : `Alım tetiği: ${hi20}₺ üstü hacimli kapanış · destek MA20 ${ma20.toFixed(2)}₺ / 20g dip ${lo20}₺.`;
+        plan = `Düşüş trendinde alım yok; önce MA50 ${e.ma50.toFixed(2)}₺ üstü kapanış gerekir. Destek 20g dip ${lo20}₺.`; trig = { t: "ma50", hit: c > e.ma50, text: `MA50 ${e.ma50.toFixed(2)}₺ üstüne çıktı (düşüş trendinden çıkış denemesi)` };
+      } else {
+        head = `⚪ BEKLE${k && k.final !== "NÖTR" ? ` (motor ${k.final} %${k.confidence}, kalite filtresini geçmedi)` : ""}`;
+        plan = `Alım tetiği: ${hi20}₺ üstü hacimli kapanış · destek MA20 ${ma20.toFixed(2)}₺ / 20g dip ${lo20}₺.`; trig = { t: "hi20", hit: c > hi20, text: `20g zirve ${hi20}₺ üstüne çıktı (alım tetiği)` };
       }
-      out.push(`${sym} @${c}₺ — ${head}\n   Trend ${trend} · RSI ${Math.round(e.rsi ?? 0)} · ADX ${Math.round(e.adx || 0)} · 20g aralık ${lo20}–${hi20}₺\n   ${plan}`);
-    } catch (err) { out.push(`${sym}: hata (${err.message})`); }
+      const en = await earnDays(sym, st);
+      out.push({ sym, c, trig, text: `${sym} @${c}₺ — ${head}${earnTag(en)}\n   Trend ${trend} · RSI ${Math.round(e.rsi ?? 0)} · ADX ${Math.round(e.adx || 0)} · 20g aralık ${lo20}–${hi20}₺\n   ${plan}` });
+    } catch (err) { out.push({ sym, text: `${sym}: hata (${err.message})` }); }
   }
-  return `🎯 TAKİP LİSTESİ — trade önerisi\n${fmtTime()}\n\n` + out.join("\n\n") + "\n\nKural: yalnız botun kalite filtrelerini geçen sinyal AL/SAT; diğerleri BEKLE + tetik seviyesi.\n⚠ Yatırım tavsiyesi değildir.";
+  return (_wCache = out);
+}
+async function watchMsg(signals, bearRegime, st) {
+  const w = await watchEval(signals, bearRegime, st);
+  return `🎯 TAKİP LİSTESİ — trade önerisi\n${fmtTime()}\n\n` + w.map(x => x.text).join("\n\n") + "\n\nKural: yalnız botun kalite filtrelerini geçen sinyal AL/SAT; diğerleri BEKLE + tetik seviyesi.\n⚠ Yatırım tavsiyesi değildir.";
+}
+// TETİK UYARISI: tetik seviyesi ALTINDAN ÜSTÜNE geçince (önceki taramada altındaydı) anında; hisse başına günde 1.
+async function watchAlerts(signals, bearRegime, st) {
+  const d = new Date().toISOString().slice(0, 10), w = await watchEval(signals, bearRegime, st);
+  if (!st.watchHit || st.watchHit.d !== d) st.watchHit = { d, s: [] };
+  st.watchPrev = st.watchPrev || {};
+  const hits = [];
+  for (const x of w) {
+    if (!x.trig) continue;
+    const before = st.watchPrev[x.sym];
+    if (x.trig.hit && before === x.trig.t + ":0" && !st.watchHit.s.includes(x.sym)) { hits.push(x); st.watchHit.s.push(x.sym); }
+    st.watchPrev[x.sym] = x.trig.t + ":" + (x.trig.hit ? 1 : 0);
+  }
+  if (!hits.length) return 0;
+  await sendTG(`🎯 TETİK — takip listesi · ${fmtTime()}\n` + hits.map(x => `${x.sym} @${x.c}₺: ${x.trig.text}`).join("\n") + "\n\nGün içi fiyat; teyit için kapanışı bekle.\n⚠ Yatırım tavsiyesi değildir.");
+  return 1;
 }
 
 // ---------- MODEL PORTFÖY (aylık + 3 aylık) — Pazartesi 08:00 (workflow), kaçarsa haftanın ilk seans raporunda ----------
@@ -650,18 +686,48 @@ async function mpData() {
   const data = {};
   for (let i = 0; i < syms.length; i += CONC) await Promise.all(syms.slice(i, i + CONC).map(async s => { data[s] = await fetchDaily(s).catch(() => []); }));
   const idx = await fetchDaily("XU100").catch(() => []);
-  return idx.length < 200 ? null : buildModels(data, idx);
+  return idx.length < 200 ? null : { m: buildModels(data, idx), data, idx };
 }
-async function mpSend() {
-  const m = await mpData();
-  if (!m) { console.error("Model portföy: XU100 verisi yok"); return false; }
-  return sendTG(modelMsg(m, fmtTime()));
+// st verilirse: geçen haftanın modelinin GERÇEK getirisi (stop yiyen stop fiyatından) + birikimli, XU100'e karşı; yeni model st.mp'ye yazılır
+async function mpSend(st = null) {
+  const r = await mpData();
+  if (!r) { console.error("Model portföy: XU100 verisi yok"); return false; }
+  const { m, data, idx } = r, wk = weekKey(Date.now()), f = v => v == null ? "?" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+  let perf = "";
+  if (st?.mp?.monthly && st.mp.wk !== wk) {
+    const ret = (list, kind) => { const rr = list.map(x => { const ex = st.mp.stopped?.[kind + ":" + x.sym] ?? data[x.sym]?.at(-1)?.close; return ex ? (ex / x.price - 1) * 100 : null; }).filter(v => v != null); return rr.length ? rr.reduce((a, b) => a + b, 0) / rr.length : null; };
+    const h = { wk: st.mp.wk, m: ret(st.mp.monthly, "m"), q: ret(st.mp.quarterly, "q"), x: st.mp.xu ? (idx.at(-1).close / st.mp.xu - 1) * 100 : null };
+    st.mpHist = (st.mpHist || []).concat([h]).slice(-52);
+    const cum = k => (st.mpHist.reduce((a, y) => a * (1 + (y[k] || 0) / 100), 1) - 1) * 100;
+    perf = `📈 Geçen haftanın modeli (${st.mp.date} → bugün, stop yiyen stop fiyatından): aylık ${f(h.m)} · 3 aylık ${f(h.q)} · XU100 ${f(h.x)}\nBirikimli (${st.mpHist.length} hafta): aylık ${f(cum("m"))} · 3 aylık ${f(cum("q"))} · XU100 ${f(cum("x"))}`;
+  }
+  const all = [...m.monthly, ...m.quarterly];
+  const ens = await Promise.all([...new Set(all.map(x => x.sym))].map(async s => [s, await earnDays(s, st)]));
+  const em = Object.fromEntries(ens); for (const x of all) x.earn = em[x.sym];
+  const ok = await sendTG(modelMsg(m, fmtTime(), perf));
+  if (ok && st) st.mp = { wk, date: new Date().toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" }), xu: idx.at(-1).close, stopped: {},
+    monthly: m.monthly.map(({ sym, price, stop }) => ({ sym, price, stop })), quarterly: m.quarterly.map(({ sym, price, stop }) => ({ sym, price, stop })) };
+  return ok;
+}
+// MODEL STOP UYARISI: kapanışa yakın (17:30+) stop altındaki model hissesi → anında "modelden çık" (portföy başına bir kez)
+async function mpStops(st) {
+  if (!st.mp?.monthly) return 0;
+  st.mp.stopped = st.mp.stopped || {};
+  const hits = [], px = {};
+  for (const [kind, list, name] of [["m", st.mp.monthly, "aylık"], ["q", st.mp.quarterly || [], "3 aylık"]]) for (const x of list) {
+    if ((kind + ":" + x.sym) in st.mp.stopped) continue;
+    if (!(x.sym in px)) px[x.sym] = (await fetchDaily(x.sym).catch(() => [])).at(-1)?.close ?? null;
+    const c = px[x.sym]; if (c && c < x.stop) { st.mp.stopped[kind + ":" + x.sym] = c; hits.push(`${x.sym} @${c}₺ < stop ${x.stop} (${name} model)`); }
+  }
+  if (!hits.length) return 0;
+  await sendTG(`🛑 MODEL PORTFÖY STOP · ${fmtTime()}\n` + hits.join("\n") + "\n\nStop altında → modelden çık (haftalık performansa bu fiyattan yazılır).\n⚠ Yatırım tavsiyesi değildir.");
+  return 1;
 }
 async function runPortfolioMode() {
-  const st = await gistGet(PAPER_FILE, null), wk = weekKey(Date.now());
-  const ok = await mpSend();
-  if (ok && st && st !== READ_FAILED && typeof st.cash === "number" && st.pos) { st.lastMPWeek = wk; await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } }); }
-  console.log(`Model portföy ${ok ? "gönderildi" : "GÖNDERİLEMEDİ"} (hafta ${wk})`);
+  const st0 = await gistGet(PAPER_FILE, null), st = (st0 && st0 !== READ_FAILED && typeof st0.cash === "number" && st0.pos) ? st0 : null;
+  const ok = await mpSend(st);
+  if (ok && st) { st.lastMPWeek = weekKey(Date.now()); await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } }); }
+  console.log(`Model portföy ${ok ? "gönderildi" : "GÖNDERİLEMEDİ"} (hafta ${weekKey(Date.now())})`);
 }
 
 // ---------- Ana ----------
@@ -742,22 +808,28 @@ async function main() {
   const doReport = manual || (st ? (st.lastReportSlot !== slot || st.lastReportDay !== istDay) : (istMin % 30) < 15);
   let sent = 0;
   // YENİ AL → rapor beklemeden ANINDA bildir (hisse başına günde 1 kez). Rapor taramasında ayrı mesaj atılmaz, HİSSE TARA'da 🆕.
-  let newSet = null;
+  let newSet = null, dirty = false;
   if (st) {
     if (!st.alSeen || st.alSeen.d !== istDay) st.alSeen = { d: istDay, s: [] };
     const seen = new Set(st.alSeen.s), fresh = signals.filter(s => s.signal === "AL" && !seen.has(s.sym));
     if (fresh.length) {
       newSet = new Set(fresh.map(s => s.sym)); st.alSeen.s.push(...newSet);
       if (!doReport && isTradingHours()) { await sendTG(`🔔 YENİ AL SİNYALİ · ${fmtTime()}\n` + fresh.map(sigLine).join("\n") + "\n\n⚠ Yatırım tavsiyesi değildir."); sent++; }
-      if (!doReport) await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });   // rapor taramasında aşağıda zaten kaydedilir
+      dirty = true;
     }
   }
+  // ANINDA UYARILAR (seans içinde her tarama): takip listesi tetiği + kapanışa yakın model portföy stop'u
+  if (st && isTradingHours()) {
+    try { sent += await watchAlerts(signals, bearRegime, st); dirty = true; } catch (e) { console.error("Tetik uyarısı:", e.message); }
+    if (istHour * 60 + istMin >= 1050 && st.mpStopDay !== istDay) { try { sent += await mpStops(st); st.mpStopDay = istDay; dirty = true; } catch (e) { console.error("Model stop:", e.message); } }
+  }
+  if (st && dirty && !doReport) await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });   // rapor taramasında aşağıda kaydedilir
 
   if (doReport) {
     // 1) HİSSE TARA — TÜM AL/SAT (en güçlü 15 ayrıntılı + kalanı kısa liste)
     await sendTG(buildScanMsg(signals, gistErr, newSet)); sent++;
     // 1b) TAKİP LİSTESİ — kullanıcının hisseleri için ayrı trade önerisi mesajı (her raporda)
-    try { await sendTG(await watchMsg(signals, bearRegime)); sent++; } catch (e) { console.error("Takip listesi:", e.message); }
+    try { await sendTG(await watchMsg(signals, bearRegime, st)); sent++; } catch (e) { console.error("Takip listesi:", e.message); }
 
     // 2) AI TRADER durumu (saatlik): yeni pozisyon?, açık pozisyonlar + açılıştan beri K/Z
     if (st) {
@@ -841,7 +913,7 @@ async function main() {
         } catch (e) { console.error("Haber arşivi:", e.message); }
       }
       // MODEL PORTFÖY yedeği: Pazartesi 08:00 gönderimi kaçtıysa haftanın İLK seans raporunda gönder (haftada 1)
-      if (isTradingHours() && st.lastMPWeek !== weekKey(Date.now())) { try { if (await mpSend()) { st.lastMPWeek = weekKey(Date.now()); sent++; } } catch (e) { console.error("Model portföy:", e.message); } }
+      if (isTradingHours() && st.lastMPWeek !== weekKey(Date.now())) { try { if (await mpSend(st)) { st.lastMPWeek = weekKey(Date.now()); sent++; } } catch (e) { console.error("Model portföy:", e.message); } }
       st.lastReportHour = istHour; st.lastReportSlot = slot; st.lastReportDay = istDay; st.hourOpens = []; st.hourCloses = [];
       await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
       console.log(`Rapor gönderildi · değer ~${Math.round(eq)}₺ · getiri ${portRet.toFixed(2)}% · poz ${openLines.length}`);
@@ -861,4 +933,5 @@ if (import.meta.url === _entry) {
     process.exit(1);
   });
 }
-export { runPaper, heldInfo, sigLine, watchMsg, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
+export const _setWatchCache = v => { _wCache = v; };   // yalnız test
+export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
