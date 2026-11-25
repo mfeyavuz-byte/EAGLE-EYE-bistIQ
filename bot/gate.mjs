@@ -17,6 +17,12 @@ export function gate(d = new Date()) {
   return "skip";
 }
 
+// GÜN SONU ÖZETİ: 18:20 İstanbul'a kalan saniye (geçtiyse 0). Yahoo BIST verisi ~15 dk gecikmeli → kapanış otursun.
+export function eodWait(d = new Date()) {
+  const p = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d);
+  const m = (+p.find(x => x.type === "hour").value % 24) * 60 + +p.find(x => x.type === "minute").value;
+  return m < 1100 ? (1100 - m) * 60 - d.getUTCSeconds() : 0;
+}
 // MODEL PORTFÖY saati: Pazartesi 08:00 İstanbul. Pzt <08:00 → beklenecek saniye · Pzt 08:00–10:00 → 0 · diğer → "skip"
 export function mpGate(d = new Date()) {
   const p = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d);
@@ -29,5 +35,5 @@ export function mpGate(d = new Date()) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const a = process.argv[2], d = a ? new Date(+a * 1000) : new Date();
-  console.log(String(process.argv[3] === "mp" ? mpGate(d) : gate(d)));
+  console.log(String(process.argv[3] === "mp" ? mpGate(d) : process.argv[3] === "eod" ? eodWait(d) : gate(d)));
 }

@@ -16,9 +16,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "manual = tek tarama + rapor (test) · loop = seans döngüsü · portfolio = model portföy mesajı (test)"
+        description: "manual = tek tarama + rapor (test) · loop = seans döngüsü · portfolio = model portföy mesajı (test) · summary = gün sonu özeti (test)"
         type: choice
-        options: [manual, loop, portfolio]
+        options: [manual, loop, portfolio, summary]
         default: manual
 
 permissions:
@@ -74,7 +74,13 @@ jobs:
             echo "=== Tarama · İstanbul $(TZ=Europe/Istanbul date +%H:%M) ==="
             EAGLE_MODE=loop node bot/run.mjs
             NEXT=$(($(date +%s) + 900))
-            if [ "$(node bot/gate.mjs "$NEXT")" != "0" ]; then echo "Seans bitti — döngü tamam."; break; fi
+            if [ "$(node bot/gate.mjs "$NEXT")" != "0" ]; then
+              echo "Seans bitti — gün sonu özeti 18:20'de."
+              E=$(node bot/gate.mjs "$(date +%s)" eod); case "$E" in ''|*[!0-9]*) E=0;; esac
+              if [ $(( $(date +%s) + E )) -lt $(( T0 + 345 * 60 )) ]; then sleep "$E"; fi   # iş zaman aşımına (350 dk) takılma
+              EAGLE_MODE=summary node bot/run.mjs
+              break
+            fi
             if [ "$NEXT" -gt "$END" ]; then
               echo "Süre sınırı — devam koşusu tetikleniyor."
               curl -s -o /dev/null -w "dispatch HTTP %{http_code}\n" -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$WF/trade.yml/dispatches" -d "{\"ref\":\"$GITHUB_REF_NAME\",\"inputs\":{\"mode\":\"loop\"}}"

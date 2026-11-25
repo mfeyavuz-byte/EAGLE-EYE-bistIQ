@@ -551,7 +551,7 @@ function buildStatus(st) {
   m += `\n\n📌 Açık pozisyonlar (${lines.length}/5):\n` + (lines.join("\n") || "yok");
   return m;
 }
-async function handleCommands(st) {
+async function handleCommands(st, ctx = {}) {   // ctx: { signals, bearRegime } (o anki tarama)
   if (!TG_TOKEN || !TG_CHAT || !st) return;
   let updates = [];
   try {
@@ -566,14 +566,27 @@ async function handleCommands(st) {
     const raw = (u.message?.text || "").trim();
     const txt = raw.toLowerCase().split("@")[0];
     if (String(u.message?.chat?.id) !== String(TG_CHAT)) continue;
-    if (txt === "/durum" || txt === "/pozisyonlar" || txt === "/start") {
+    if (txt === "/durum" || txt === "/pozisyonlar") {
       await sendTG(buildStatus(st)); replied++; await sleep(300);
+    } else if (txt === "/start") {
+      await sendTG(buildStatus(st) + "\n\n" + HELP); replied++; await sleep(300);
     } else if (txt === "/performans" || txt === "/perf") {
       await sendTG(perfReport(st)); replied++; await sleep(300);
     } else if (txt === "/aitest") {
       await sendTG("🔧 AI anahtarları test ediliyor…");
       const d = await llmDiag();
       await sendTG(`🔧 AI TEST\n• Gemini (${d.geminiModel}): ${d.gemini}\n• Grok (${d.grokModel}): ${d.grok}`); replied++; await sleep(300);
+    } else if (txt === "/komutlar" || txt === "/help" || txt === "/yardim" || txt === "/yardım") {
+      await sendTG(HELP); replied++; await sleep(300);
+    } else if (txt === "/model") {
+      await sendTG(await modelStatus(st)); replied++; await sleep(300);
+    } else if (txt === "/takip") {
+      await sendTG(await watchMsg(ctx.signals || [], !!ctx.bearRegime, st)); replied++; await sleep(300);
+    } else if (txt.startsWith("/hisse")) {
+      const sym = (raw.split(/\s+/)[1] || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (!sym) await sendTG("Kullanım: /hisse SEMBOL  (örn. /hisse THYAO)");
+      else { const x = await ideaFor(sym, ctx.signals || [], !!ctx.bearRegime, st); await sendTG(`🔎 HİSSE ÖNERİSİ · ${fmtTime()}\n\n${x.text}\n\nKural: yalnız botun kalite filtrelerini geçen sinyal AL/SAT; diğerleri BEKLE + tetik seviyesi.\n⚠ Yatırım tavsiyesi değildir.`); }
+      replied++; await sleep(300);
     } else if (txt.startsWith("/yorum")) {
       // Grok + X (Twitter) duyarlılığı — istek üzerine: /yorum ASELS
       const sym = (raw.split(/\s+/)[1] || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -634,30 +647,27 @@ const earnTag = n => n != null && n <= 3 ? ` · ⚠ bilanço ${n} gün` : "";
 // Kural botun kendisi: yalnız kalite filtrelerini geçen canlı sinyal AL/SAT sayılır; diğerleri BEKLE + tetik/destek seviyeleri.
 const WATCH = (process.env.WATCH || "YEOTK,EUPWR,GESAN,ASTOR").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
 let _wCache = null;   // bir çalışmada tek hesap (uyarı + rapor aynı veriyi kullanır)
+// TEK HİSSE trade önerisi (takip listesi + /hisse komutu). Kural botun kendisi: kalite filtreli canlı sinyal AL/SAT, değilse BEKLE + tetik.
+async function ideaFor(sym, signals, bearRegime, st) {
+  try {
+    const d = await fetchDaily(sym); if (d.length < 60) return { sym, text: `${sym}: veri alınamadı (sembol doğru mu? BIST kodu yazın, örn. THYAO)` };
+    const w = await fetchWeekly(sym), ed = enrichData(d), e = ed[ed.length - 1], k = getSignals(ed, getHigherTrend(w), w);
+    const j = d.length - 1, c = d[j].close, chg = j > 0 ? (c / d[j - 1].close - 1) * 100 : null, prev = d.slice(Math.max(0, j - 20), j), hi20 = Math.max(...prev.map(b => b.high)), lo20 = Math.min(...prev.map(b => b.low));
+    const ma20 = d.slice(Math.max(0, j - 19), j + 1).reduce((x, b) => x + b.close, 0) / Math.min(20, j + 1), live = signals.find(s => s.sym === sym);
+    const trend = e.ma50 && e.ma200 ? (c > e.ma50 && e.ma50 > e.ma200 ? "yükseliş" : c < e.ma50 && e.ma50 < e.ma200 ? "düşüş" : "yatay/karışık") : "belirsiz";
+    let head, plan, trig = null, mark;   // trig: { t: tür, hit: geçildi mi, text }
+    const why = k && k.final !== "NÖTR" ? ` (motor ${k.final} %${k.confidence}, kalite filtresini geçmedi)` : "";
+    if (live?.signal === "AL") { mark = "🟢"; head = `🟢 AL (bot sinyali · güven %${live.confidence})`; plan = `Giriş ~${c}₺ · stop ${live.stopLoss} · hedef ${live.target1}${bearRegime && !live.dip ? " · ⚠ düşüş rejimi: AI TRADER yalnız dip alıyor, küçük pozisyon" : ""}`; }
+    else if (live?.signal === "SAT") { mark = "🔴"; head = `🔴 SAT (bot sinyali · güven %${live.confidence})`; plan = `Elde varsa çık/azalt, yeni alım yok. İlk dönüş teyidi: MA20 ${ma20.toFixed(2)}₺ üstü kapanış (güçlü teyit ${hi20}₺).`; trig = { t: "ma20", hit: c > ma20, text: `MA20 ${ma20.toFixed(2)}₺ üstüne çıktı (SAT'tan ilk dönüş teyidi)` }; }
+    else if (trend === "düşüş" && e.ma50) { mark = "⚪"; head = `⚪ BEKLE${why}`; plan = `Düşüş trendinde alım yok; önce MA50 ${e.ma50.toFixed(2)}₺ üstü kapanış gerekir. Destek 20g dip ${lo20}₺.`; trig = { t: "ma50", hit: c > e.ma50, text: `MA50 ${e.ma50.toFixed(2)}₺ üstüne çıktı (düşüş trendinden çıkış denemesi)` }; }
+    else { mark = "⚪"; head = `⚪ BEKLE${why}`; plan = `Alım tetiği: ${hi20}₺ üstü hacimli kapanış · destek MA20 ${ma20.toFixed(2)}₺ / 20g dip ${lo20}₺.`; trig = { t: "hi20", hit: c > hi20, text: `20g zirve ${hi20}₺ üstüne çıktı (alım tetiği)` }; }
+    const en = await earnDays(sym, st);
+    return { sym, c, chg, trig, mark, text: `${sym} @${c}₺ (${chg == null ? "?" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"}) — ${head}${earnTag(en)}\n   Trend ${trend} · RSI ${Math.round(e.rsi ?? 0)} · ADX ${Math.round(e.adx || 0)} · 20g aralık ${lo20}–${hi20}₺\n   ${plan}` };
+  } catch (err) { return { sym, text: `${sym}: hata (${err.message})` }; }
+}
 async function watchEval(signals, bearRegime, st) {
   if (_wCache) return _wCache;
-  const out = [];
-  for (const sym of WATCH) {
-    try {
-      const d = await fetchDaily(sym); if (d.length < 60) { out.push({ sym, text: `${sym}: veri alınamadı` }); continue; }
-      const w = await fetchWeekly(sym), ed = enrichData(d), e = ed[ed.length - 1], k = getSignals(ed, getHigherTrend(w), w);
-      const j = d.length - 1, c = d[j].close, prev = d.slice(Math.max(0, j - 20), j), hi20 = Math.max(...prev.map(b => b.high)), lo20 = Math.min(...prev.map(b => b.low));
-      const ma20 = d.slice(j - 19, j + 1).reduce((x, b) => x + b.close, 0) / 20, live = signals.find(s => s.sym === sym);
-      const trend = e.ma50 && e.ma200 ? (c > e.ma50 && e.ma50 > e.ma200 ? "yükseliş" : c < e.ma50 && e.ma50 < e.ma200 ? "düşüş" : "yatay/karışık") : "belirsiz";
-      let head, plan, trig = null;   // trig: { t: tür, hit: geçildi mi, text }
-      if (live?.signal === "AL") { head = `🟢 AL (bot sinyali · güven %${live.confidence})`; plan = `Giriş ~${c}₺ · stop ${live.stopLoss} · hedef ${live.target1}${bearRegime && !live.dip ? " · ⚠ düşüş rejimi: AI TRADER yalnız dip alıyor, küçük pozisyon" : ""}`; }
-      else if (live?.signal === "SAT") { head = `🔴 SAT (bot sinyali · güven %${live.confidence})`; plan = `Elde varsa çık/azalt, yeni alım yok. İlk dönüş teyidi: MA20 ${ma20.toFixed(2)}₺ üstü kapanış (güçlü teyit ${hi20}₺).`; trig = { t: "ma20", hit: c > ma20, text: `MA20 ${ma20.toFixed(2)}₺ üstüne çıktı (SAT'tan ilk dönüş teyidi)` }; }
-      else if (trend === "düşüş" && e.ma50) {
-        head = `⚪ BEKLE${k && k.final !== "NÖTR" ? ` (motor ${k.final} %${k.confidence}, kalite filtresini geçmedi)` : ""}`;
-        plan = `Düşüş trendinde alım yok; önce MA50 ${e.ma50.toFixed(2)}₺ üstü kapanış gerekir. Destek 20g dip ${lo20}₺.`; trig = { t: "ma50", hit: c > e.ma50, text: `MA50 ${e.ma50.toFixed(2)}₺ üstüne çıktı (düşüş trendinden çıkış denemesi)` };
-      } else {
-        head = `⚪ BEKLE${k && k.final !== "NÖTR" ? ` (motor ${k.final} %${k.confidence}, kalite filtresini geçmedi)` : ""}`;
-        plan = `Alım tetiği: ${hi20}₺ üstü hacimli kapanış · destek MA20 ${ma20.toFixed(2)}₺ / 20g dip ${lo20}₺.`; trig = { t: "hi20", hit: c > hi20, text: `20g zirve ${hi20}₺ üstüne çıktı (alım tetiği)` };
-      }
-      const en = await earnDays(sym, st);
-      out.push({ sym, c, trig, text: `${sym} @${c}₺ — ${head}${earnTag(en)}\n   Trend ${trend} · RSI ${Math.round(e.rsi ?? 0)} · ADX ${Math.round(e.adx || 0)} · 20g aralık ${lo20}–${hi20}₺\n   ${plan}` });
-    } catch (err) { out.push({ sym, text: `${sym}: hata (${err.message})` }); }
-  }
+  const out = []; for (const sym of WATCH) out.push(await ideaFor(sym, signals, bearRegime, st));
   return (_wCache = out);
 }
 async function watchMsg(signals, bearRegime, st) {
@@ -723,6 +733,57 @@ async function mpStops(st) {
   await sendTG(`🛑 MODEL PORTFÖY STOP · ${fmtTime()}\n` + hits.join("\n") + "\n\nStop altında → modelden çık (haftalık performansa bu fiyattan yazılır).\n⚠ Yatırım tavsiyesi değildir.");
   return 1;
 }
+// Model portföyün güncel durumu (kayıt anından beri ve bugün), stop yiyen stop fiyatından — /model ve gün sonu özeti
+const pct = v => v == null || !isFinite(v) ? "?" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+async function mpPerf(st) {
+  if (!st?.mp?.monthly) return null;
+  const all = [...new Set([...st.mp.monthly, ...(st.mp.quarterly || [])].map(x => x.sym))];
+  const D2 = Object.fromEntries(await Promise.all(all.map(async s => [s, (await fetchDaily(s).catch(() => [])).slice(-2)])));
+  const avg = v => v.length ? v.reduce((p, q) => p + q, 0) / v.length : null;
+  const calc = (list, k) => { const since = [], day = [], rows = [];
+    for (const x of list) { const b = D2[x.sym] || [], cur = b.at(-1)?.close ?? null, stp = st.mp.stopped?.[k + ":" + x.sym];
+      const r = stp != null ? (stp / x.price - 1) * 100 : cur ? (cur / x.price - 1) * 100 : null;
+      if (r != null) since.push(r); if (stp == null && cur && b.length > 1) day.push((cur / b[0].close - 1) * 100);
+      rows.push(`${x.sym} ${x.price}→${stp ?? cur ?? "?"}₺ ${pct(r)}${stp != null ? " 🛑" : ""}`); }
+    return { since: avg(since), day: avg(day), rows }; };
+  const xu = await fetchDaily("XU100").catch(() => []);
+  return { m: calc(st.mp.monthly, "m"), q: calc(st.mp.quarterly || [], "q"), xSince: st.mp.xu && xu.length ? (xu.at(-1).close / st.mp.xu - 1) * 100 : null, xDay: xu.length > 1 ? (xu.at(-1).close / xu.at(-2).close - 1) * 100 : null, xu: xu.at(-1)?.close ?? null };
+}
+async function modelStatus(st) {
+  const p = await mpPerf(st);
+  if (!p) return "💼 Henüz kayıtlı model portföy yok — her Pazartesi 08:00'de gelir.";
+  return `💼 MODEL PORTFÖY — ${st.mp.date} tarihinden beri (stop yiyen 🛑 stop fiyatından)\n${fmtTime()}\n\n🗓 AYLIK: ${pct(p.m.since)} (bugün ${pct(p.m.day)})\n` + p.m.rows.join("\n")
+    + `\n\n📆 3 AYLIK: ${pct(p.q.since)} (bugün ${pct(p.q.day)})\n` + p.q.rows.join("\n") + `\n\n🏛 XU100 aynı dönem ${pct(p.xSince)} · bugün ${pct(p.xDay)}\n⚠ Yatırım tavsiyesi değildir.`;
+}
+// GÜN SONU ÖZETİ (seans bitince ~18:20; Yahoo BIST verisi ~15 dk gecikmeli → kapanış fiyatı oturmuş olsun)
+async function daySummary(st) {
+  const today = new Date().toISOString().slice(0, 10), istD = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" });
+  const eq = st.cash + Object.values(st.pos || {}).reduce((a, p) => a + p.lot * (p.last || p.entry), 0);
+  const dp = st.dayKey === today && st.dayStart ? (eq / st.dayStart - 1) * 100 : null;
+  const closed = (st.trades || []).filter(t => t.close === today), opened = Object.entries(st.pos || {}).filter(([, p]) => p.date === today);
+  let m = `🌇 GÜN SONU ÖZETİ\n${fmtTime()}\n\n📊 AI TRADER: ${Math.round(eq).toLocaleString("tr-TR")}₺ · bugün ${pct(dp)} · başlangıçtan ${pct((eq / st.start - 1) * 100)} · açık ${Object.keys(st.pos || {}).length} poz`;
+  m += `\n   Bugün açılan (${opened.length}): ${opened.map(([s, p]) => `${s} @${p.entry}`).join(", ") || "-"}`;
+  m += `\n   Bugün kapanan (${closed.length}): ${closed.map(t => `${t.sym} ${pct(t.pnlPct)} ${t.reason}`).join(", ") || "-"}`;
+  const p = await mpPerf(st);
+  if (p) m += `\n\n🏛 XU100 ${p.xu ?? "?"} · bugün ${pct(p.xDay)}\n💼 Model portföy (${st.mp.date} tarihinden beri): aylık ${pct(p.m.since)} (bugün ${pct(p.m.day)}) · 3 aylık ${pct(p.q.since)} (bugün ${pct(p.q.day)}) · XU100 ${pct(p.xSince)}`;
+  else { const xu = await fetchDaily("XU100").catch(() => []); m += `\n\n🏛 XU100 ${xu.at(-1)?.close ?? "?"} · bugün ${pct(xu.length > 1 ? (xu.at(-1).close / xu.at(-2).close - 1) * 100 : null)}`; }
+  const sig = Object.entries(st.lastScan?.w || {}).map(([sym, v]) => ({ sym, ...v }));
+  const w = await watchEval(sig, false, st);
+  m += `\n\n🎯 Takip: ` + w.map(x => `${x.mark || ""}${x.sym} ${x.c ?? "?"}₺ ${pct(x.chg)}`).join(" · ");
+  const ls = st.lastScan, alNew = st.alSeen?.d === istD ? st.alSeen.s : [];
+  if (ls) m += `\n\n🦅 Son tarama: ${ls.al.length} AL · ${ls.sat.length} SAT${ls.al.length ? `\n   AL: ${ls.al.join(", ")}` : ""}`;
+  m += `\n   Bugün ilk kez AL olan: ${alNew.join(", ") || "yok"}`;
+  return m + "\n\n⚠ Yatırım tavsiyesi değildir.";
+}
+async function runSummaryMode() {
+  const st = await gistGet(PAPER_FILE, null), istD = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" });
+  if (!st || st === READ_FAILED || typeof st.cash !== "number") { console.error("Gün sonu: gist okunamadı"); return; }
+  if (st.lastSummaryDay === istD && process.env.MODE !== "summary") { console.log("Gün sonu özeti bugün zaten gönderildi."); return; }
+  const ok = await sendTG(await daySummary(st));
+  if (ok) { st.lastSummaryDay = istD; await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } }); }
+  console.log(`Gün sonu özeti ${ok ? "gönderildi" : "GÖNDERİLEMEDİ"}`);
+}
+const HELP = "🤖 KOMUTLAR\n/durum — AI TRADER anlık\n/performans — işlem istatistiği\n/model — model portföy ve getirisi\n/takip — takip listesi (YEOTK, EUPWR, GESAN, ASTOR)\n/hisse SEMBOL — herhangi bir hisse için trade önerisi (örn. /hisse THYAO)\n/yorum SEMBOL — Grok ile X (Twitter) duyarlılığı\n/aitest — AI anahtar testi\n\nNot: bot seansta 15 dk'da bir çalışır → cevap en geç ~15 dk içinde; seans dışında bir sonraki çalışmada.";
 async function runPortfolioMode() {
   const st0 = await gistGet(PAPER_FILE, null), st = (st0 && st0 !== READ_FAILED && typeof st0.cash === "number" && st0.pos) ? st0 : null;
   const ok = await mpSend(st);
@@ -733,6 +794,7 @@ async function runPortfolioMode() {
 // ---------- Ana ----------
 async function main() {
   if (process.env.EAGLE_MODE === "portfolio") return runPortfolioMode();
+  if (process.env.EAGLE_MODE === "summary") return runSummaryMode();
   const t0 = Date.now();
   console.log("Tarama başlıyor:", syms.length, "sembol");
   let signals = await scanAll();
@@ -794,7 +856,7 @@ async function main() {
   }
 
   // Telegram komutlarına cevap ver (/durum, /pozisyonlar) — her run
-  if (st) await handleCommands(st);
+  if (st) await handleCommands(st, { signals, bearRegime });
 
   // ---------- RAPOR: 30 dk'da bir (tarama 15 dk'da bir; yeni AL ayrıca ANINDA) ----------
   const istHour = +new Date().toLocaleString("en-US", { timeZone: "Europe/Istanbul", hour: "2-digit", hour12: false });
@@ -818,6 +880,8 @@ async function main() {
       dirty = true;
     }
   }
+  // Son taramanın özeti (gün sonu özeti için): AL/SAT listeleri + takip hisselerinin canlı sinyali
+  if (st) { st.lastScan = { t: Date.now(), al: signals.filter(s => s.signal === "AL").map(s => s.sym), sat: signals.filter(s => s.signal === "SAT").map(s => s.sym), w: Object.fromEntries(signals.filter(s => WATCH.includes(s.sym)).map(s => [s.sym, { signal: s.signal, confidence: s.confidence, stopLoss: s.stopLoss, target1: s.target1, dip: s.dip }])) }; dirty = true; }
   // ANINDA UYARILAR (seans içinde her tarama): takip listesi tetiği + kapanışa yakın model portföy stop'u
   if (st && isTradingHours()) {
     try { sent += await watchAlerts(signals, bearRegime, st); dirty = true; } catch (e) { console.error("Tetik uyarısı:", e.message); }
@@ -935,4 +999,4 @@ if (import.meta.url === _entry) {
   });
 }
 export const _setWatchCache = v => { _wCache = v; };   // yalnız test
-export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
+export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, ideaFor, daySummary, modelStatus, HELP, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
