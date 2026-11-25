@@ -176,10 +176,9 @@ async function scanOne(sym, io = { fetchDaily, fetchWeekly }) {
   // KALİTE FİLTRESİ — daha isabetli, daha az gürültü. DİP DÖNÜŞLER muaf (karşı-trend doğrulanmış giriş).
   const isDip = !!k.dipSignal;
   if (!off.conf && k.confidence < MIN_CONF) return null;                                 // zayıf sinyalleri ele (varsayılan 65)
-  if (!off.adx && !isDip && (k.adx || 0) < MIN_ADX) return null;                        // trendsiz/choppy gürültü (dip hariç)
-  if (!off.htf && !isDip && (k.htfNote || "").includes("⚠")) return null;               // üst zaman dilimi çelişkili (dip hariç)
-  if (!off.asagi && !isDip && k.final === "AL" && k.higherTrend === "ASAGI") return null; // düşen trende momentum-AL yok (dip hariç)
-  if (!off.yukari && k.final === "SAT" && k.higherTrend === "YUKARI") return null;         // yükselen trende karşı SATMA
+  if (!off.adx && !isDip && (k.adx || 0) < MIN_ADX) return null;
+  // 2026-11-27 sadeleştirme: "üst zaman ⚠", "düşen haftalık trende AL yok", "yükselen haftalık trende SAT yok" KALDIRILDI —
+  // 12 ay saatlik simülasyonda getiri VE sinyal sayısı birebir aynıydı (motor bu durumları zaten eliyor). Kullanıcı onayıyla.                        // trendsiz/choppy gürültü (dip hariç)
   if (!off.vol && !isDip && k.final === "AL" && (last.volume || 0) < avgVol * 0.7) return null; // hacim kuruması = teyitsiz AL
   if (!off.rsi && !isDip && k.final === "AL" && (last.rsi || 0) >= 63) return null; // aşırı-alımda/geç girişi ele (backtest: erken giriş %42 vs geç %34)
   return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol), er: _er, preMom, rets20: _rs20, breakout, boTarget,

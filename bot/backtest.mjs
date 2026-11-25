@@ -2,7 +2,7 @@
 // 2026-11-22 DÜZELTME — artık CANLI botun (run.mjs scanOne + main) sinyal filtrelerini birebir uygular:
 //  • ÜST TREND HAFTALIK mumdan (eskiden günlük dilim "haftalık" diye veriliyordu → üst trend/haftalık doji filtreleri yanlış).
 //    Gelecek sızmasın diye: o güne kadar TAMAMLANMIŞ haftalar + içinde bulunulan haftanın o güne kadarki kısmı (canlıdaki gibi).
-//  • Eskiden eksik olan canlı filtreler: likidite (≥5M₺/gün), üst-zaman ⚠, hacim kuruması, RSI≥63, endekse göre zayıf (RS).
+//  • Canlı filtreler: likidite (≥5M₺/gün), hacim kuruması, RSI≥63, endekse göre zayıf (RS). (üst-zaman ⚠ ve ASAGI 2026-11-27'de etkisiz diye kaldırıldı)
 //  ⇒ Sayılar 2026-06-22 tabanıyla (eski gevşek filtre) KIYASLANAMAZ; yeni taban PROJECT.md'de.
 //  (Haber ve MCP katmanı geçmişe dönük üretilemez → dahil değil. scanOne'daki filtre değişirse BURAYI da güncelle.)
 import { enrichData, getHigherTrend, getSignals } from './engine.mjs';
@@ -27,8 +27,6 @@ for(let b=0;b<sample.length;b+=8){
       if(avgVol*last.close<5e6)continue;                                   // likidite
       const isDip=!!k.dipSignal;
       if(!isDip&&(k.adx||0)<MIN_ADX)continue;                              // trendsiz
-      if(!isDip&&(k.htfNote||'').includes('⚠'))continue;                   // üst zaman çelişkili
-      if(!isDip&&k.higherTrend==='ASAGI')continue;                         // düşen trende momentum-AL yok
       if(!isDip&&(last.volume||0)<avgVol*0.7)continue;                     // hacim kuruması
       if(!isDip&&(last.rsi||0)>=63)continue;                               // aşırı-alım/geç giriş
       // --- canlı main() RS filtresi: endeksten belirgin zayıf AL'ı ele (dip hariç) ---
