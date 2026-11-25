@@ -16,9 +16,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "manual = tek tarama + rapor (test) · loop = seans döngüsü"
+        description: "manual = tek tarama + rapor (test) · loop = seans döngüsü · portfolio = model portföy mesajı (test)"
         type: choice
-        options: [manual, loop]
+        options: [manual, loop, portfolio]
         default: manual
 
 permissions:
@@ -53,8 +53,8 @@ jobs:
           T0=$(date +%s)
           WF="https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows"
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$MODE" != "loop" ]; then
-            echo "Manuel tetik — tek tarama + rapor."
-            EAGLE_MODE=manual node bot/run.mjs; exit 0
+            echo "Manuel tetik — ${MODE:-manual}."
+            EAGLE_MODE=${MODE:-manual} node bot/run.mjs; exit 0
           fi
           W=$(node bot/gate.mjs "$T0")
           echo "Tetik: $GITHUB_EVENT_NAME · İstanbul $(TZ=Europe/Istanbul date '+%a %H:%M') · kapı: $W"
@@ -63,7 +63,12 @@ jobs:
           for F in trade.yml backtest.yml; do   # ikisi de zamanlanmış → ikisi de 60 gün kuralına tabi
             curl -s -o /dev/null -w "keepalive $F HTTP %{http_code}\n" -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$WF/$F/enable"
           done
-          if [ "$W" -gt 0 ]; then echo "Açılışa $((W / 60)) dk — bekleniyor."; sleep "$W"; fi
+          if [ "$W" -gt 0 ]; then
+            MP=$(node bot/gate.mjs "$(date +%s)" mp)   # Pazartesi 08:00 → MODEL PORTFÖY mesajı
+            case "$MP" in ''|*[!0-9]*) ;; *) echo "Model portföy: $((MP / 60)) dk sonra"; if [ "$MP" -gt 0 ]; then sleep "$MP"; fi; EAGLE_MODE=portfolio node bot/run.mjs;; esac
+            W=$(node bot/gate.mjs "$(date +%s)"); case "$W" in ''|*[!0-9]*) W=0;; esac
+            if [ "$W" -gt 0 ]; then echo "Açılışa $((W / 60)) dk — bekleniyor."; sleep "$W"; fi
+          fi
           END=$((T0 + 330 * 60))   # iş zaman aşımı 350 dk; son tarama en geç 330. dk'da başlar
           while :; do
             echo "=== Tarama · İstanbul $(TZ=Europe/Istanbul date +%H:%M) ==="

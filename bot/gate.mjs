@@ -17,7 +17,17 @@ export function gate(d = new Date()) {
   return "skip";
 }
 
+// MODEL PORTFÖY saati: Pazartesi 08:00 İstanbul. Pzt <08:00 → beklenecek saniye · Pzt 08:00–10:00 → 0 · diğer → "skip"
+export function mpGate(d = new Date()) {
+  const p = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d);
+  const v = t => p.find(x => x.type === t).value;
+  if (v("weekday") !== "Mon") return "skip";
+  const m = (+v("hour") % 24) * 60 + +v("minute");
+  if (m < 480) return (480 - m) * 60 - d.getUTCSeconds();
+  return m < OPEN ? 0 : "skip";
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const a = process.argv[2];
-  console.log(String(gate(a ? new Date(+a * 1000) : new Date())));
+  const a = process.argv[2], d = a ? new Date(+a * 1000) : new Date();
+  console.log(String(process.argv[3] === "mp" ? mpGate(d) : gate(d)));
 }

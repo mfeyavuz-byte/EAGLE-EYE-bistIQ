@@ -5,7 +5,8 @@
 // State Gist'te (feybot_paper.json). Bağımlılıksız (Node 20+ ESM).
 
 import { getSignals, enrichData, getHigherTrend } from "./engine.mjs";
-import { fetchDaily, fetchWeekly, fetchIndexClose } from "./data.mjs";
+import { fetchDaily, fetchWeekly, fetchIndexClose, weekKey } from "./data.mjs";
+import { buildModels, modelMsg } from "./model-portfolio.mjs";
 import { mcpCall } from "./mcp.mjs";
 import { grokXSentiment, geminiAdvise, grokEnabled, geminiEnabled, llmDiag, grokLastError } from "./llm.mjs";
 import { positionScan } from "./position-scan.mjs";
@@ -618,8 +619,50 @@ function marketContext(signals, idxRows, xuNow) {
   return { signals, bearRegime, breadth, volScale, idxRet60, xuMA200, sd, rsCut: n0 - signals.length };
 }
 
+// ---------- TAKİP LİSTESİ (kullanıcının hisseleri) — her raporda AYRI mesaj ----------
+// Kural botun kendisi: yalnız kalite filtrelerini geçen canlı sinyal AL/SAT sayılır; diğerleri BEKLE + tetik/destek seviyeleri.
+const WATCH = (process.env.WATCH || "YEOTK,EUPWR,GESAN,ASTOR").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+async function watchMsg(signals, bearRegime) {
+  const out = [];
+  for (const sym of WATCH) {
+    try {
+      const d = await fetchDaily(sym); if (d.length < 60) { out.push(`${sym}: veri alınamadı`); continue; }
+      const w = await fetchWeekly(sym), ed = enrichData(d), e = ed[ed.length - 1], k = getSignals(ed, getHigherTrend(w), w);
+      const j = d.length - 1, c = d[j].close, prev = d.slice(Math.max(0, j - 20), j), hi20 = Math.max(...prev.map(b => b.high)), lo20 = Math.min(...prev.map(b => b.low));
+      const ma20 = d.slice(j - 19, j + 1).reduce((x, b) => x + b.close, 0) / 20, live = signals.find(s => s.sym === sym);
+      const trend = e.ma50 && e.ma200 ? (c > e.ma50 && e.ma50 > e.ma200 ? "yükseliş" : c < e.ma50 && e.ma50 < e.ma200 ? "düşüş" : "yatay/karışık") : "belirsiz";
+      let head, plan;
+      if (live?.signal === "AL") { head = `🟢 AL (bot sinyali · güven %${live.confidence})`; plan = `Giriş ~${c}₺ · stop ${live.stopLoss} · hedef ${live.target1}${bearRegime && !live.dip ? " · ⚠ düşüş rejimi: AI TRADER yalnız dip alıyor, küçük pozisyon" : ""}`; }
+      else if (live?.signal === "SAT") { head = `🔴 SAT (bot sinyali · güven %${live.confidence})`; plan = `Elde varsa çık/azalt, yeni alım yok. İlk dönüş teyidi: MA20 ${ma20.toFixed(2)}₺ üstü kapanış (güçlü teyit ${hi20}₺).`; }
+      else {
+        head = `⚪ BEKLE${k && k.final !== "NÖTR" ? ` (motor ${k.final} %${k.confidence}, kalite filtresini geçmedi)` : ""}`;
+        plan = trend === "düşüş" ? `Düşüş trendinde alım yok; önce MA50 ${e.ma50.toFixed(2)}₺ üstü kapanış gerekir. Destek 20g dip ${lo20}₺.`
+          : `Alım tetiği: ${hi20}₺ üstü hacimli kapanış · destek MA20 ${ma20.toFixed(2)}₺ / 20g dip ${lo20}₺.`;
+      }
+      out.push(`${sym} @${c}₺ — ${head}\n   Trend ${trend} · RSI ${Math.round(e.rsi ?? 0)} · ADX ${Math.round(e.adx || 0)} · 20g aralık ${lo20}–${hi20}₺\n   ${plan}`);
+    } catch (err) { out.push(`${sym}: hata (${err.message})`); }
+  }
+  return `🎯 TAKİP LİSTESİ — trade önerisi\n${fmtTime()}\n\n` + out.join("\n\n") + "\n\nKural: yalnız botun kalite filtrelerini geçen sinyal AL/SAT; diğerleri BEKLE + tetik seviyesi.\n⚠ Yatırım tavsiyesi değildir.";
+}
+
+// ---------- MODEL PORTFÖY (aylık + 3 aylık) — Pazartesi 08:00 (workflow), kaçarsa haftanın ilk seans raporunda ----------
+async function mpSend() {
+  const data = {};
+  for (let i = 0; i < syms.length; i += CONC) await Promise.all(syms.slice(i, i + CONC).map(async s => { data[s] = await fetchDaily(s).catch(() => []); }));
+  const idx = await fetchDaily("XU100").catch(() => []);
+  if (idx.length < 200) { console.error("Model portföy: XU100 verisi yok"); return false; }
+  return sendTG(modelMsg(buildModels(data, idx), fmtTime()));
+}
+async function runPortfolioMode() {
+  const st = await gistGet(PAPER_FILE, null), wk = weekKey(Date.now());
+  const ok = await mpSend();
+  if (ok && st && st !== READ_FAILED && typeof st.cash === "number" && st.pos) { st.lastMPWeek = wk; await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } }); }
+  console.log(`Model portföy ${ok ? "gönderildi" : "GÖNDERİLEMEDİ"} (hafta ${wk})`);
+}
+
 // ---------- Ana ----------
 async function main() {
+  if (process.env.EAGLE_MODE === "portfolio") return runPortfolioMode();
   const t0 = Date.now();
   console.log("Tarama başlıyor:", syms.length, "sembol");
   let signals = await scanAll();
@@ -709,6 +752,8 @@ async function main() {
   if (doReport) {
     // 1) HİSSE TARA — TÜM AL/SAT (en güçlü 15 ayrıntılı + kalanı kısa liste)
     await sendTG(buildScanMsg(signals, gistErr, newSet)); sent++;
+    // 1b) TAKİP LİSTESİ — kullanıcının hisseleri için ayrı trade önerisi mesajı (her raporda)
+    try { await sendTG(await watchMsg(signals, bearRegime)); sent++; } catch (e) { console.error("Takip listesi:", e.message); }
 
     // 2) AI TRADER durumu (saatlik): yeni pozisyon?, açık pozisyonlar + açılıştan beri K/Z
     if (st) {
@@ -784,6 +829,8 @@ async function main() {
           }
         } catch (e) { console.error("Haber arşivi:", e.message); }
       }
+      // MODEL PORTFÖY yedeği: Pazartesi 08:00 gönderimi kaçtıysa haftanın İLK seans raporunda gönder (haftada 1)
+      if (isTradingHours() && st.lastMPWeek !== weekKey(Date.now())) { try { if (await mpSend()) { st.lastMPWeek = weekKey(Date.now()); sent++; } } catch (e) { console.error("Model portföy:", e.message); } }
       st.lastReportHour = istHour; st.lastReportSlot = slot; st.lastReportDay = istDay; st.hourOpens = []; st.hourCloses = [];
       await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
       console.log(`Rapor gönderildi · değer ~${Math.round(eq)}₺ · getiri ${portRet.toFixed(2)}% · poz ${openLines.length}`);
@@ -803,4 +850,4 @@ if (import.meta.url === _entry) {
     process.exit(1);
   });
 }
-export { runPaper, heldInfo, sigLine, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
+export { runPaper, heldInfo, sigLine, watchMsg, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
