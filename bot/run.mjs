@@ -646,12 +646,16 @@ async function watchMsg(signals, bearRegime) {
 }
 
 // ---------- MODEL PORTFÖY (aylık + 3 aylık) — Pazartesi 08:00 (workflow), kaçarsa haftanın ilk seans raporunda ----------
-async function mpSend() {
+async function mpData() {
   const data = {};
   for (let i = 0; i < syms.length; i += CONC) await Promise.all(syms.slice(i, i + CONC).map(async s => { data[s] = await fetchDaily(s).catch(() => []); }));
   const idx = await fetchDaily("XU100").catch(() => []);
-  if (idx.length < 200) { console.error("Model portföy: XU100 verisi yok"); return false; }
-  return sendTG(modelMsg(buildModels(data, idx), fmtTime()));
+  return idx.length < 200 ? null : buildModels(data, idx);
+}
+async function mpSend() {
+  const m = await mpData();
+  if (!m) { console.error("Model portföy: XU100 verisi yok"); return false; }
+  return sendTG(modelMsg(m, fmtTime()));
 }
 async function runPortfolioMode() {
   const st = await gistGet(PAPER_FILE, null), wk = weekKey(Date.now());
@@ -795,10 +799,17 @@ async function main() {
         st.lastPosDay = st.dayKey;   // başarısız olsa da bugün tekrar deneme (~195 fetch → tek/gün)
         try {
           const pos = await positionScan(syms, idxRows);
-          if (pos.length) {
-            let mp = `📅 TUTUŞ LİSTESİ — haftalık (~5 gün) & aylık (~1 ay) · Stage-2 — ${pos.length} aday${pos.length > 12 ? ", en güçlü 12 ayrıntılı" : ""}\n${fmtTime()}\n\n`
-              + pos.slice(0, 12).map(p => `${p.sym} @${p.price}₺ · skor ${p.score} · RS6a ${p.rs >= 0 ? "+" : ""}${p.rs} · ADX ${p.adx} · RSI ${p.rsi}${p.obvUp ? " · OBV↑" : ""} · stop ${p.stop}`).join("\n")
-              + (pos.length > 12 ? `\n➕ Diğer ${pos.length - 12}: ` + pos.slice(12).map(p => p.sym).sort().join(", ") : "");   // sessiz kesim yok
+          // EN AZ 5 HİSSE (kullanıcı isteği): Stage-2 adayı 5'ten azsa aylık model portföyün ölçülmüş sırasıyla tamamla
+          // (düşük oynaklık + MA200 üstü + endeksten güçlü → endeksten en güçlü).
+          let fill = [];
+          if (pos.length < 5) { const m = await mpData().catch(() => null); if (m) fill = m.monthly.filter(x => !pos.some(p => p.sym === x.sym)).slice(0, 5 - pos.length); }
+          if (pos.length || fill.length) {
+            const n = pos.length + fill.length;
+            let mp = `📅 TUTUŞ LİSTESİ — haftalık (~5 gün) & aylık (~1 ay) — ${n} hisse${pos.length > 12 ? ", en güçlü 12 ayrıntılı" : ""}\n${fmtTime()}\n\n`
+              + pos.slice(0, 12).map(p => `${p.sym} @${p.price}₺ · Stage-2 · skor ${p.score} · RS6a ${p.rs >= 0 ? "+" : ""}${p.rs} · ADX ${p.adx} · RSI ${p.rsi}${p.obvUp ? " · OBV↑" : ""} · stop ${p.stop}`).join("\n")
+              + (pos.length > 12 ? `\n➕ Diğer ${pos.length - 12}: ` + pos.slice(12).map(p => p.sym).sort().join(", ") : "")   // sessiz kesim yok
+              + (fill.length ? (pos.length ? "\n" : "") + fill.map(x => `${x.sym} @${x.price}₺ · ${x.tag} · RS6a ${x.rs >= 0 ? "+" : ""}${x.rs}${x.vol != null ? ` · oynaklık %${x.vol}` : ""} · stop ${x.stop}`).join("\n")
+                + `\n(Stage-2 adayı ${pos.length} → en az 5 için aylık model sırasıyla tamamlandı)` : "");
             mp += `\n\n📏 Ölçüm (son 12 ay, 2026-11, bot/hold-backtest.mjs): bu listedeki hisseler piyasayı 5 günde ort. +%0.9, 21 günde +%2.3 geçti (iki yarıda da pozitif). Ayrı haftalık kurallar (geri çekilme, kırılım) piyasayı geçmedi → haftalık ve aylık için en iyi aday bu liste.`;
             mp += `\n\n⚠ Sadece bilgi · AI TRADER bunları İŞLEME ALMAZ.`;
             await sendTG(mp); sent++; await sleep(400);
