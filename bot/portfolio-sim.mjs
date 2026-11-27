@@ -9,7 +9,7 @@
 // Dahil DEĞİL (geçmişe dönük üretilemez): haber puanı, MCP katmanı (bilanço kara listesi / PE<0 / analist).
 // Sınır: tek dönem, kısa örnek → ince ayar için değil, bariz yapısal hataları görmek için.
 for (const k of ["GH_GIST_TOKEN", "GIST_ID", "TG_TOKEN", "TG_CHAT", "XAI_API_KEY", "GEMINI_API_KEY"]) delete process.env[k];
-const { scanAll, marketContext, runPaper, perfStats } = await import("./run.mjs");
+const { scanAll, marketContext, runPaper, perfStats, shortCore } = await import("./run.mjs");
 const { fetchDaily, fetchWeekly, fetchHourly, istDay, weeklyAsOf } = await import("./data.mjs");
 const { default: syms } = await import("./symbols.json", { with: { type: "json" } });
 
@@ -46,7 +46,8 @@ for (const day of days) {
   const sig = await scanAll(io);
   const ir = IDX.slice(0, upto(IDX, day) + 1), xuNow = ir.at(-1)?.close ?? null;
   const mc = marketContext(sig, ir, xuNow, OFF);
-  DAY[day] = { signals: mc.signals, mc, xuNow, nAL: sig.filter(s => s.signal === "AL").length, nSAT: sig.filter(s => s.signal === "SAT").length };
+  const sd = {}; for (const s of syms) { const a = D[s] || [], j = upto(a, day); if (j >= 21) sd[s] = a.slice(j - 40 < 0 ? 0 : j - 40, j + 1); }
+  DAY[day] = { short: shortCore(sd, ir.slice(-2)), signals: mc.signals, mc, xuNow, nAL: sig.filter(s => s.signal === "AL").length, nSAT: sig.filter(s => s.signal === "SAT").length };
 }
 // genişlik patlaması: AL oranı ≤%10'dan 10 gün içinde ≥%40'a → 20 gün düşüş rejimini kaldır (DENEY)
 let on = -1; days.forEach((d, i) => { const b = DAY[d].mc.breadth; if (b >= 0.4 && days.slice(Math.max(0, i - 10), i).some(x => DAY[x].mc.breadth <= 0.1)) on = i; DAY[d].thrust = on >= 0 && i - on < 20; });
@@ -66,6 +67,10 @@ const SCEN = [   // B = canlı varsayılan (2026-11-22: düşüşte dip + zayıf
   ["I", "zayıflama çıkışı KAPALI (2026-11-22 öncesi kod)", true, { weakExit: false }],
   ["J", "+ TOBO kurulumu", true, {}, "tobo"],
   ["K", "+ genişlik patlaması → savunmadan erken çıkış", true, {}, "thrust"],
+  ["S1", "+ KISA VADE: dönüş günü + güçlü kapanış (≤3 poz, 3 gün)", true, { short: true }],
+  ["S2", "+ KISA VADE: yalnız endeks dönüş günü", true, { short: true, shortRevOnly: true }],
+  ["S3", "+ gün ≤−%4 düşeni alma", true, { avoidWeak: true }],
+  ["S4", "+ S1 + S3", true, { short: true, avoidWeak: true }],
 ];
 const ONLY = (ARGS.find(a => a.startsWith("--sen=")) || "").slice(6).split(",").filter(Boolean);   // ör. --sen=B,L
 const pathPrice = (b, k, N) => {
@@ -110,7 +115,7 @@ async function simulate(cfg, intraday, mode) {
         const last = k === N - 1;
         const sigs = last ? signals.map(s => ({ ...s })) : [];
         for (const s of Object.keys(st.pos)) if (!sigs.some(x => x.sym === s)) { const b = bar(s, day); if (b) sigs.push({ sym: s, signal: "NÖTR", confidence: 0, price: last ? b.close : ptPrice(s, day, b, k, N), ...(last ? held(s, day, mc) : {}) }); }
-        st = await runPaper(sigs, xuNow, bear, { state: st, forceTrading: true, today: day, cfg, isClose: last }, { breadth: mc.breadth, volScale: mc.volScale });
+        st = await runPaper(sigs, xuNow, bear, { state: st, forceTrading: true, today: day, cfg, isClose: last }, { breadth: mc.breadth, volScale: mc.volScale, short: last ? DD[day].short : null });
       }
       st.hourOpens = []; st.hourCloses = [];
     }

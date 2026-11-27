@@ -329,7 +329,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
   const today = (_test && _test.today) || new Date().toISOString().slice(0, 10);   // _test.today: portföy simülatörünün günü
   // Çıkış ayarları. Varsayılanlar = CANLI davranış; yalnız portföy simülatörü _test.cfg ile senaryo dener
   // (beR: başabaşı +%2 yerine ilk riskin (2×ATR) katında yap · sigExitDip:false → dip kurulumunu SAT sinyali kapatmaz).
-  const cfg = { beR: null, sigExitDip: true, failExit: false, weakExit: true, bearMode: "dip",   // 2026-11-22 SAATLİK simülasyon: dip + zayıflama çıkışı iki yolda da eski kodu geçti; lider karışıktı → geri alındı
+  const cfg = { beR: null, sigExitDip: true, failExit: false, weakExit: true, bearMode: "dip", short: false, shortRevOnly: false, avoidWeak: false,   // 2026-11-22 SAATLİK simülasyon: dip + zayıflama çıkışı iki yolda da eski kodu geçti; lider karışıktı → geri alındı
     ...((_test && _test.cfg) || {}) };
   const atClose = !_test || _test.isClose !== false;   // simülatör gün içi noktalarda false verir
   // zayıflama çıkışı simülasyondaki gibi KAPANIŞA YAKIN değerlendirilir (17:30 sonrası; gün içi kısmi hacimle erken tetiklenmesin)
@@ -412,6 +412,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
     const hitSL = ps.sl && cur <= ps.sl, hitTS = !!trailLv && cur <= trailLv, hitSIG = satSet.has(sym) && (cfg.sigExitDip || ps.setup !== "dip");
     const hitTP = !ps.partial && ps.tp && cur >= ps.tp;
     const hitTIME = daysHeld >= 14 && Math.abs(pct) < 0.02;
+    const hitKISA = ps.setup === "kisa" && daysHeld >= 5;   // kısa vade: ~3 iş günü (5 takvim günü) sonra çık
     const sm = scanMap[sym];   // DENEY çıkışları (cfg; canlıda kapalı)
     const hitFAIL = cfg.failExit && atClose && !ps.pyr && daysHeld >= 1 && daysHeld <= 3 && cur < ps.entry * 0.99;
     // ZAYIFLAMA: o gün sinyali OLMAYAN pozisyon MA20 altına hacimle (>1.2×) kapanıyor ve endeksten belirgin zayıf (RS<−5) → çık
@@ -420,9 +421,9 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
       const hi = sm?.ma20 != null ? sm : (_test ? {} : await heldInfo(sym, mkt.idxRet60 || 0));
       hitWEAK = hi.ma20 > 0 && cur < hi.ma20 && (hi.volR || 0) > 1.2 && (hi.rs ?? 0) < -5;
     }   // ÖLÜ PARA: 14 günde kıpırdamadı → sermayeyi boşalt
-    if (hitSL || hitTS || hitSIG || hitTP || hitTIME || hitFAIL || hitWEAK) {
-      const reason = hitSL ? (ps.sl === ps.entry ? "BE" : "SL") : hitTS ? "TS" : hitSIG ? "SIG" : hitTP ? "TP" : hitFAIL ? "FAIL" : hitWEAK ? "WEAK" : "ZAMAN";
-      const label = { SL: "Zarar Durdur", BE: "Başabaş (kâr korundu)", TS: "Trailing Stop", SIG: "SAT sinyali", TP: "Hedef", ZAMAN: "Ölü para (zaman stopu)", FAIL: "Başarısız kırılım", WEAK: "Zayıflama" }[reason];
+    if (hitSL || hitTS || hitSIG || hitTP || hitTIME || hitFAIL || hitWEAK || hitKISA) {
+      const reason = hitSL ? (ps.sl === ps.entry ? "BE" : "SL") : hitTS ? "TS" : hitSIG ? "SIG" : hitTP ? "TP" : hitFAIL ? "FAIL" : hitWEAK ? "WEAK" : hitKISA ? "KISA" : "ZAMAN";
+      const label = { SL: "Zarar Durdur", BE: "Başabaş (kâr korundu)", TS: "Trailing Stop", SIG: "SAT sinyali", TP: "Hedef", ZAMAN: "Ölü para (zaman stopu)", FAIL: "Başarısız kırılım", WEAK: "Zayıflama", KISA: "Kısa vade süresi doldu" }[reason];
       const pnl = +((cur - ps.entry) * ps.lot).toFixed(0), pnlPct = +(pct * 100).toFixed(2);
       st.cash += ps.lot * cur;
       st.trades.unshift({ sym, entry: ps.entry, exit: cur, lot: ps.lot, pnl, pnlPct, open: ps.date, close: today, reason, setup: ps.setup || "?", feat: ps.feat });
@@ -456,6 +457,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
   const ddOK = !st.dayStart || (equity - st.dayStart) / st.dayStart > -0.03;
   const disabled = disabledSetups(st.trades, today);  // ampirik: son 10'u net-zararlı kurulumu 30 gün durdur (soğuma)
   let candidates = signals.filter(s => s.signal === "AL" && !st.pos[s.sym] && !disabled.has(setupOf(s)) && !s.blackout && !s.weakFund);
+  if (cfg.avoidWeak && mkt.short?.weakSet) candidates = candidates.filter(s => !mkt.short.weakSet.has(s.sym));   // gün ≤−%4: kısa vadede zayıflık sürüyor
   if (defensive) candidates = cfg.bearMode === "none" ? [] : cfg.bearMode === "leader" ? candidates.filter(s => s.leader) : candidates.filter(s => s.dip);   // düşüş/zayıf-genişlik → SADECE dip
   candidates = candidates
     .map(s => ({ ...s, _score: (s.confidence || 0) + upside(s) * 0.6 + (s.rr || 0) * 3 + (s.rs || 0) * 0.8 + (s.secStrong ? 5 : 0) + (s.dip ? s.dip * 2.5 : 0) + (s.ret60 || 0) * 0.3 + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.breakout || 0) * 15 }))   // güven+potansiyel+R:R+göreli güç+sektör+dip(backtest:en iyi kenar)
@@ -483,6 +485,23 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
       const costPct = Math.round(Q * j / equity * 100);
       const why = `setup ${setup}(×${rm})${sig.analyst ? " · analist " + sig.analyst : ""}${sig.rs != null ? " · RS " + sig.rs : ""} · R:R ${sig.rr || "?"}`;
       opened.push(`📈 ${sig.sym} · ${Q} lot @ ${j}₺ (%${costPct} · ${setup}) · güven %${conf} · pot %${up.toFixed(1)} · stop ${sl} · hedef ${tp}\n   ↳ ${why}`);
+    }
+  }
+  // ⚡ KISA VADE AÇILIŞLARI (cfg.short; gün SONU, mkt.short): endeks dönüş günü dipten en çok toparlananlar + güçlü kapanış → en çok 3 'kisa' poz
+  if (cfg.short && atClose && mkt.short && ddOK && !disabled.has("kisa")) {
+    const K = mkt.short, seen = new Set(), list = [...(K.rev ? K.top : []), ...(cfg.shortRevOnly ? [] : K.strong)].filter(r => !seen.has(r.sym) && seen.add(r.sym) && !st.pos[r.sym]);
+    let nK = Object.values(st.pos).filter(p => p.setup === "kisa").length;
+    for (const r of list) {
+      if (nK >= 3 || Object.keys(st.pos).length >= 8) break;
+      const j = r.c, slDist = r.atr > 0 ? +(2 * r.atr).toFixed(2) : +(j * 0.03).toFixed(2), sl = +(j - slDist).toFixed(2), tp = +(j + 2 * slDist).toFixed(2);
+      let Q = slDist > 0 ? Math.floor(equity * RISK_PCT * riskMult("kisa", st) / slDist) : 0;
+      if (Q * j > equity * MAXCOST) Q = Math.floor(equity * MAXCOST / j);
+      if (Q * j > st.cash) Q = Math.floor(st.cash / j);
+      if (r.avgVol && Q > r.avgVol * 0.05) Q = Math.floor(r.avgVol * 0.05);
+      if (Q <= 0 || sl >= j) continue;
+      st.cash -= Q * j; nK++;
+      st.pos[r.sym] = { lot: Q, entry: j, date: today, sl, tp, peak: 0, setup: "kisa", atr: r.atr > 0 ? +r.atr.toFixed(4) : null, feat: { kisa: K.rev && K.top.some(x => x.sym === r.sym) ? "donus" : "guclu", dr: +r.dr.toFixed(2) } };
+      opened.push(`⚡ ${r.sym} · ${Q} lot @ ${j}₺ (kısa vade · ${st.pos[r.sym].feat.kisa === "donus" ? "endeks dönüşü" : "güçlü kapanış"}) · stop ${sl} · hedef ${tp} · en çok 3 iş günü`);
     }
   }
   } // seans (trading) bloğu sonu
@@ -743,18 +762,24 @@ async function mpStops(st) {
 //  GÜÇLÜ KAPANIŞ (gün ≥+%4, kapanış gün aralığının üst %20'si, hacim ≥1.5×): 1g +%0.37, 3g +%0.39 (yarılar +0.44/+0.34, n=2183).
 //  SERT DÜŞÜŞ (gün ≤−%4): 1g −%0.67, 3g −%1.25 (yarılar −0.95/−1.44) → kısa vadede zayıflık SÜRÜYOR, "dipten al" yanlış.
 //  Ölçülüp REDDEDİLENLER (şans düzeyi): saatlik RSI dönüşü, gün içi −%2→dünkü kapanış üstü, 3g −%5→EMA20 geri alma.
+// Saf çekirdek (canlı shortTerm + portföy simülatörü AYNI kod): data = { SYM: günlük mumlar (son mum = değerlendirilen gün) }, x = XU100 günlük
+function shortCore(data, x) {
+  if (!x || x.length < 2) return null;
+  const xt = x.at(-1), xp = x.at(-2).close, rows = [];
+  for (const [s, a] of Object.entries(data)) {
+    const j = a.length - 1; if (j < 21 || istDayOf(a[j].ts) !== istDayOf(xt.ts)) continue;   // o gün işlem görmeyen hisse yok sayılır
+    const t = a[j], pc = a[j - 1].close, v20 = a.slice(j - 20, j).reduce((p, b) => p + (b.volume || 0), 0) / 20; if (!pc || v20 * t.close < 5e6) continue;
+    let tr = 0; for (let k = j - 13; k <= j; k++) tr += Math.max(a[k].high - a[k].low, Math.abs(a[k].high - a[k - 1].close), Math.abs(a[k].low - a[k - 1].close));
+    rows.push({ sym: s, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100, atr: tr / 14, avgVol: v20 });
+  }
+  return { day: istDayOf(xt.ts), rev: xt.low <= xp * 0.99 && xt.close > xp, xDay: (xt.close / xp - 1) * 100, xLow: (xt.low / xp - 1) * 100,
+    top: [...rows].sort((p, q) => q.rec - p.rec).slice(0, 10), strong: rows.filter(r => r.dr >= 4 && r.pos >= 0.8 && r.vr >= 1.5).sort((p, q) => q.dr - p.dr).slice(0, 10),
+    weak: rows.filter(r => r.dr <= -4).sort((p, q) => p.dr - q.dr).slice(0, 10), weakSet: new Set(rows.filter(r => r.dr <= -4).map(r => r.sym)) };
+}
 async function shortTerm() {
   const data = {};
   for (let i = 0; i < syms.length; i += CONC) await Promise.all(syms.slice(i, i + CONC).map(async s => { data[s] = await fetchDaily(s).catch(() => []); }));
-  const x = await fetchDaily("XU100").catch(() => []); if (x.length < 2) return null;
-  const xt = x.at(-1), xp = x.at(-2).close, rows = [];
-  for (const [s, a] of Object.entries(data)) {
-    const j = a.length - 1; if (j < 21) continue;
-    const t = a[j], pc = a[j - 1].close, v20 = a.slice(j - 20, j).reduce((p, b) => p + (b.volume || 0), 0) / 20; if (!pc || v20 * t.close < 5e6) continue;
-    rows.push({ sym: s, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100 });
-  }
-  return { day: istDayOf(xt.ts), rev: xt.low <= xp * 0.99 && xt.close > xp, xDay: (xt.close / xp - 1) * 100, xLow: (xt.low / xp - 1) * 100,
-    top: [...rows].sort((p, q) => q.rec - p.rec).slice(0, 10), strong: rows.filter(r => r.dr >= 4 && r.pos >= 0.8 && r.vr >= 1.5).sort((p, q) => q.dr - p.dr).slice(0, 10), weak: rows.filter(r => r.dr <= -4).sort((p, q) => p.dr - q.dr).slice(0, 10) };
+  return shortCore(data, await fetchDaily("XU100").catch(() => []));
 }
 const istDayOf = ts => new Date(ts + 3 * 3600e3).toISOString().slice(0, 10);
 const stLine = r => `${r.sym} ${r.c}₺ ${pct(r.dr)}${r.rec != null ? ` · dipten +%${r.rec.toFixed(1)}` : ""}`;
@@ -1042,4 +1067,5 @@ if (import.meta.url === _entry) {
   });
 }
 export const _setWatchCache = v => { _wCache = v; };   // yalnız test
+export { shortCore };
 export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, ideaFor, daySummary, modelStatus, HELP, shortTerm, shortTermMsg, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
