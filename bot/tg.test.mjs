@@ -18,8 +18,8 @@ for (const [nA, nS, label] of [[1, 81, "bugünkü gerçek durum (1 AL / 81 SAT)"
   const m = buildScanMsg(sig), got = symsIn(m);
   ok(sig.every(s => got.has(s.sym)) && got.size === nA + nS, `${label}: ${got.size}/${nA + nS} hisse mesajda · ${m.length} krk`);
   ok(m.includes(`📈 AL (${nA})`) && m.includes(`📉 SAT (${nS})`), `  başlıkta TOPLAM sayı: AL (${nA}) · SAT (${nS})`);
-  const detailed = m.split("\n").filter(l => /^Q[A-Z]{3} %/.test(l)).length, more = (m.match(/➕ Diğer (\d+)/g) || []).map(x => +x.split(" ").pop());
-  ok(detailed === Math.min(nA, 15) + Math.min(nS, 15) && more.reduce((a, b) => a + b, 0) === Math.max(0, nA - 15) + Math.max(0, nS - 15), `  ayrıntılı ${detailed} satır + kısa listede ${more.reduce((a, b) => a + b, 0)} (${more.length ? "➕ Diğer satırı var" : "hepsi ayrıntılı"})`);
+  const detailed = m.split("\n").filter(l => /^Q[A-Z]{3} %/.test(l)).length;
+  ok(detailed === nA + nS && !m.includes("➕ Diğer"), `  HER hisse ayrıntılı satırda: ${detailed}/${nA + nS} ("Diğer" kısa listesi yok)`);
 }
 {
   const m = buildScanMsg([...mk(2, "AL"), ...mk(2, "SAT", 500)]), L = m.split("\n").filter(l => /^Q[A-Z]{3} %/.test(l));

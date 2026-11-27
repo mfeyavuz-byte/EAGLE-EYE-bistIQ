@@ -84,16 +84,14 @@ async function sendTG(text) {
 // Eskiden yalnız ilk 15 gösteriliyor, başlıkta da gösterilen sayı ("SAT (15)") yazıyordu → liste tam sanılıyordu.
 // Geçmiş tekrarı (2026-06-16..11-20, 112 işlem günü): SAT 99 günde 15'i aştı (en kötü 2026-10-16: 118 SAT, 103'ü mesajda yoktu);
 // AL hiç aşmadı. Sebep Telegram sınırı DEĞİL (en uzun mesaj ~1.6k krk) — bu kesim. AI TRADER her zaman TÜM sinyalleri kullandı.
-const TOP_N = 15;
 // motorun stop/hedefi ALIŞ yönlü (stop altta, hedef üstte) → SAT satırında yanıltıcıydı ("SAT … hedef 41.76") → yalnız AL'da
 const sigLine = s => `${s.sym} %${s.confidence} @${s.price}₺${s.breakout ? " 🚀KIRILIM→" + s.boTarget : ""}${s.preMom >= 50 ? " 🔥coil" : ""}${(s.er || 0) >= 0.5 ? " ⚡trend" : ""}${(s.ret60 || 0) >= 15 ? " 📈mom" : ""}${s.signal === "AL" ? ` · stop ${s.stopLoss} · hedef ${s.target1}` : ""}${s.news ? " · " + s.news : ""}`;
 function buildScanMsg(signals, gErr = 0, newSet = null) {   // newSet: bugün İLK KEZ AL olanlar → 🆕
   const _as = s => (s.confidence || 0) + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.ret60 || 0) * 0.3;
   const AL = signals.filter(s => s.signal === "AL").sort((a, b) => _as(b) - _as(a)), SA = signals.filter(s => s.signal === "SAT");
   const f = s => (newSet?.has(s.sym) ? "🆕 " : "") + sigLine(s);
-  const sec = (title, arr) => !arr.length ? "" : `\n\n${title} (${arr.length})${arr.length > TOP_N ? ` — en güçlü ${TOP_N} ayrıntılı, kalanı altta` : ""}:\n`
-    + arr.slice(0, TOP_N).map(f).join("\n")
-    + (arr.length > TOP_N ? `\n➕ Diğer ${arr.length - TOP_N}: ` + arr.slice(TOP_N).map(s => s.sym).sort().join(", ") : "");
+  // Kullanıcı isteği (2026-11-27): "Diğer" kısa listesi YOK — her AL/SAT ayrıntılı satırla (uzun mesajı sendTG parçalar)
+  const sec = (title, arr) => !arr.length ? "" : `\n\n${title} (${arr.length}):\n` + arr.map(f).join("\n");
   let m = "🦅 EAGLE EYE — HİSSE TARA (motor)\n" + fmtTime();
   if (!signals.length) m += "\n\n⚠ Tarama 0 sinyal döndü — Yahoo/veri kaynağı geçici sorun olabilir.";
   m += sec("📈 AL", AL) + sec("📉 SAT", SA);
@@ -733,6 +731,36 @@ async function mpStops(st) {
   await sendTG(`🛑 MODEL PORTFÖY STOP · ${fmtTime()}\n` + hits.join("\n") + "\n\nStop altında → modelden çık (haftalık performansa bu fiyattan yazılır).\n⚠ Yatırım tavsiyesi değildir.");
   return 1;
 }
+// ---------- ⚡ KISA VADE KATMANI (1–3 gün) — 2026-11-28 ölçümü (2 yıl saatlik → günlük; giriş gün kapanışı; getiri − aynı gün tüm likit hisseler) ----------
+//  ENDEKS DÖNÜŞ GÜNÜ (XU100 gün içi dünkü kapanışın ≤%1 altına iner, kapanışı üstünde): dipten en çok toparlanan 10 hisse → 1g +%0.83, 3g +%1.48
+//    (yarılar +1.49/+1.47; yalnız 18 gün → küçük örnek). Ertesi gün XU100 ort +%0.45 (normal gün +%0.03), %56 yükseliyor.
+//  GÜÇLÜ KAPANIŞ (gün ≥+%4, kapanış gün aralığının üst %20'si, hacim ≥1.5×): 1g +%0.37, 3g +%0.39 (yarılar +0.44/+0.34, n=2183).
+//  SERT DÜŞÜŞ (gün ≤−%4): 1g −%0.67, 3g −%1.25 (yarılar −0.95/−1.44) → kısa vadede zayıflık SÜRÜYOR, "dipten al" yanlış.
+//  Ölçülüp REDDEDİLENLER (şans düzeyi): saatlik RSI dönüşü, gün içi −%2→dünkü kapanış üstü, 3g −%5→EMA20 geri alma.
+async function shortTerm() {
+  const data = {};
+  for (let i = 0; i < syms.length; i += CONC) await Promise.all(syms.slice(i, i + CONC).map(async s => { data[s] = await fetchDaily(s).catch(() => []); }));
+  const x = await fetchDaily("XU100").catch(() => []); if (x.length < 2) return null;
+  const xt = x.at(-1), xp = x.at(-2).close, rows = [];
+  for (const [s, a] of Object.entries(data)) {
+    const j = a.length - 1; if (j < 21) continue;
+    const t = a[j], pc = a[j - 1].close, v20 = a.slice(j - 20, j).reduce((p, b) => p + (b.volume || 0), 0) / 20; if (!pc || v20 * t.close < 5e6) continue;
+    rows.push({ sym: s, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100 });
+  }
+  return { day: istDayOf(xt.ts), rev: xt.low <= xp * 0.99 && xt.close > xp, xDay: (xt.close / xp - 1) * 100, xLow: (xt.low / xp - 1) * 100,
+    top: [...rows].sort((p, q) => q.rec - p.rec).slice(0, 10), strong: rows.filter(r => r.dr >= 4 && r.pos >= 0.8 && r.vr >= 1.5).sort((p, q) => q.dr - p.dr).slice(0, 10), weak: rows.filter(r => r.dr <= -4).sort((p, q) => p.dr - q.dr).slice(0, 10) };
+}
+const istDayOf = ts => new Date(ts + 3 * 3600e3).toISOString().slice(0, 10);
+const stLine = r => `${r.sym} ${r.c}₺ ${pct(r.dr)}${r.rec != null ? ` · dipten +%${r.rec.toFixed(1)}` : ""}`;
+function shortTermMsg(k, final) {
+  let m = `⚡ KISA VADE (1–3 gün)${final ? " — gün sonu" : ""}`;
+  if (k.rev) m += `\n🔄 ENDEKS DÖNÜŞ GÜNÜ: XU100 gün içi ${pct(k.xLow)} → ${pct(k.xDay)}\n   Dipten en çok toparlananlar (ölçüm: 3 günde piyasayı ort. +%1.5 geçti; 18 gün, küçük örnek):\n   ` + k.top.map(stLine).join("\n   ")
+    + `\n   Ertesi gün XU100 ölçümü: ort +%0.45, %56 yükseliş.`;
+  m += `\n🚀 Güçlü kapanış (gün ≥+%4, tepeye yakın, hacimli; 3g piyasaya +%0.4): ` + (k.strong.length ? "\n   " + k.strong.map(r => `${r.sym} ${r.c}₺ ${pct(r.dr)}`).join("\n   ") : "bugün yok");
+  m += `\n🧊 Uzak dur (gün ≤−%4; 3g piyasaya −%1.3, dipten alma): ` + (k.weak.length ? k.weak.map(r => `${r.sym} ${pct(r.dr)}`).join(", ") : "bugün yok");
+  return m;
+}
+
 // Model portföyün güncel durumu (kayıt anından beri ve bugün), stop yiyen stop fiyatından — /model ve gün sonu özeti
 const pct = v => v == null || !isFinite(v) ? "?" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
 async function mpPerf(st) {
@@ -773,6 +801,7 @@ async function daySummary(st) {
   const ls = st.lastScan, alNew = st.alSeen?.d === istD ? st.alSeen.s : [];
   if (ls) m += `\n\n🦅 Son tarama: ${ls.al.length} AL · ${ls.sat.length} SAT${ls.al.length ? `\n   AL: ${ls.al.join(", ")}` : ""}`;
   m += `\n   Bugün ilk kez AL olan: ${alNew.join(", ") || "yok"}`;
+  try { const k = await shortTerm(); if (k) m += "\n\n" + shortTermMsg(k, true); } catch (e) { console.error("Kısa vade:", e.message); }
   return m + "\n\n⚠ Yatırım tavsiyesi değildir.";
 }
 async function runSummaryMode() {
@@ -885,6 +914,14 @@ async function main() {
   // ANINDA UYARILAR (seans içinde her tarama): takip listesi tetiği + kapanışa yakın model portföy stop'u
   if (st && isTradingHours()) {
     try { sent += await watchAlerts(signals, bearRegime, st); dirty = true; } catch (e) { console.error("Tetik uyarısı:", e.message); }
+    // 🔄 ENDEKS DÖNÜŞÜ (gün içi, günde 1): XU100 bugün dünkü kapanışın ≤%1 altına indi ve şimdi üstünde → anında + o anki en çok toparlananlar
+    try {
+      const xt = idxRows.at(-1), xp = idxRows.at(-2)?.close;
+      if (xt && xp && istDayOf(xt.ts) === istDay && st.revDay !== istDay && xt.low <= xp * 0.99 && xt.close > xp) {
+        const k = await shortTerm();
+        if (k?.rev) { await sendTG(`🔄 ENDEKS DÖNÜŞÜ (gün içi) · ${fmtTime()}\n` + shortTermMsg(k, false) + "\n\nGün içi fiyat (~15 dk gecikmeli); kesin liste gün sonu özetinde.\n⚠ Yatırım tavsiyesi değildir."); st.revDay = istDay; sent++; dirty = true; }
+      }
+    } catch (e) { console.error("Endeks dönüşü:", e.message); }
     // 17:30 sonrası HER taramada (kapanışa en yakın fiyat); uyarılan hisse st.mp.stopped'da → tekrar yok
     if (istHour * 60 + istMin >= 1050) { try { sent += await mpStops(st); dirty = true; } catch (e) { console.error("Model stop:", e.message); } }
   }
@@ -999,4 +1036,4 @@ if (import.meta.url === _entry) {
   });
 }
 export const _setWatchCache = v => { _wCache = v; };   // yalnız test
-export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, ideaFor, daySummary, modelStatus, HELP, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
+export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, ideaFor, daySummary, modelStatus, HELP, shortTerm, shortTermMsg, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };

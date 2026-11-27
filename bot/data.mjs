@@ -13,10 +13,15 @@ async function yfetch(sym, interval, range, timeout=8000){
       const j=await r.json();
       const n=j?.chart?.result?.[0];
       if(!n?.timestamp?.length)continue;
-      const q=n.indicators.quote[0], rows=[];
+      const q=n.indicators.quote[0], rows=[], L=n.timestamp.length-1, mp=n.meta?.regularMarketPrice, mt=n.meta?.regularMarketTime;
       n.timestamp.forEach((S,D)=>{
-        if(q.close[D]==null)return;
-        rows.push({ts:S*1e3,date:'',close:+(+q.close[D]).toFixed(2),open:+(+(q.open[D]??q.close[D])).toFixed(2),high:+(+(q.high[D]??q.close[D])).toFixed(2),low:+(+(q.low[D]??q.close[D])).toFixed(2),volume:q.volume[D]??0});
+        // Yahoo: SON (bugünkü) mumun kapanışı null gelebiliyor (2026-11-28: 27 Kasım günlük mumu tüm hisselerde close=null) →
+        // eskiden mum atılıyordu ve bot BUGÜNÜ HİÇ GÖRMÜYORDU (dünkü veriyle sinyal). Canlı fiyat meta.regularMarketPrice'ta.
+        let cl=q.close[D];
+        if(cl==null&&D===L&&mp>0&&mt>=S)cl=mp;
+        if(cl==null)return;
+        const o=q.open[D]??cl, h=Math.max(q.high[D]??cl,cl), l=Math.min(q.low[D]??cl,cl);
+        rows.push({ts:S*1e3,date:'',close:+(+cl).toFixed(2),open:+(+o).toFixed(2),high:+(+h).toFixed(2),low:+(+l).toFixed(2),volume:q.volume[D]??0});
       });
       return rows;
     }catch(e){ continue; }

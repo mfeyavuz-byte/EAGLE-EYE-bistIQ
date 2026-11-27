@@ -33,5 +33,17 @@ console.log("weeklyAsOf (gelecek sızıntısı yok):");
   ok(s.every(x => x.high <= Math.max(...days.slice(0, i + 1).map(b => b.high))), "hiçbir mum o günden sonraki fiyatı içermiyor");
   const f = weeklyAsOf(wk, days, 14); ok(f.length === 3 && f[2].close === wk[2].close && f[2].high === wk[2].high, "Cuma itibarıyla kısmi mum = Yahoo'nun tam hafta mumu");
 }
+console.log("Yahoo son mum kapanışı null (bugünkü mum):");
+{
+  const { fetchDaily } = await import("./data.mjs"), real = globalThis.fetch, t0 = Date.parse("2026-11-26T06:00:00Z") / 1e3, t1 = Date.parse("2026-11-27T06:00:00Z") / 1e3;
+  const mk = (cl, mp, mt) => new Response(JSON.stringify({ chart: { result: [{ meta: { regularMarketPrice: mp, regularMarketTime: mt }, timestamp: [t0, t1], indicators: { quote: [{ open: [100, 101], high: [102, 112], low: [99, 100], close: [101, cl], volume: [5, 7] }] } }] } }), { status: 200 });
+  globalThis.fetch = async () => mk(null, 110.5, t1 + 30000); let d = await fetchDaily("TEST");
+  ok(d.length === 2 && d[1].close === 110.5 && d[1].high === 112 && d[1].low === 100 && d[1].volume === 7, "son mum close=null → canlı fiyat (110.5) ile tamamlandı, O/Y/D/H korundu");
+  globalThis.fetch = async () => mk(null, 110.5, t0 - 10); d = await fetchDaily("TEST");
+  ok(d.length === 1, "canlı fiyat o güne ait değilse (eski zaman damgası) mum yine atılır");
+  globalThis.fetch = async () => mk(105, 110.5, t1 + 30000); d = await fetchDaily("TEST");
+  ok(d[1].close === 105, "kapanış doluysa dokunulmaz");
+  globalThis.fetch = real;
+}
 console.log(fail ? `\n❌ ${fail} BAŞARISIZ` : "\n✅ TÜM VERİ TESTLERİ GEÇTİ");
 process.exit(fail ? 1 : 0);
