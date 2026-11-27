@@ -84,17 +84,21 @@ async function sendTG(text) {
 // Eskiden yalnız ilk 15 gösteriliyor, başlıkta da gösterilen sayı ("SAT (15)") yazıyordu → liste tam sanılıyordu.
 // Geçmiş tekrarı (2026-06-16..11-20, 112 işlem günü): SAT 99 günde 15'i aştı (en kötü 2026-10-16: 118 SAT, 103'ü mesajda yoktu);
 // AL hiç aşmadı. Sebep Telegram sınırı DEĞİL (en uzun mesaj ~1.6k krk) — bu kesim. AI TRADER her zaman TÜM sinyalleri kullandı.
-// motorun stop/hedefi ALIŞ yönlü (stop altta, hedef üstte) → SAT satırında yanıltıcıydı ("SAT … hedef 41.76") → yalnız AL'da
-const sigLine = s => `${s.sym} %${s.confidence} @${s.price}₺${s.breakout ? " 🚀KIRILIM→" + s.boTarget : ""}${s.preMom >= 50 ? " 🔥coil" : ""}${(s.er || 0) >= 0.5 ? " ⚡trend" : ""}${(s.ret60 || 0) >= 15 ? " 📈mom" : ""}${s.signal === "AL" ? ` · stop ${s.stopLoss} · hedef ${s.target1}` : ""}${s.news ? " · " + s.news : ""}`;
-function buildScanMsg(signals, gErr = 0, newSet = null) {   // newSet: bugün İLK KEZ AL olanlar → 🆕
+// SADE SATIR (kullanıcı isteği 2026-11-28): yalnız giriş · hedef · stop. Seviyeler AI TRADER'ın kendi kuralı:
+// stop mesafesi = 2×ATR (ATR yoksa fiyatın %3'ü), hedef = 2 × stop mesafesi. SAT'ta yön ters (stop üstte, hedef altta).
+const lv = s => { const p = s.price, d = s.atr > 0 ? 2 * s.atr : p * 0.03, f = v => +v.toFixed(2); return s.signal === "SAT" ? { stop: f(p + d), tgt: f(Math.max(0.01, p - 2 * d)) } : { stop: f(p - d), tgt: f(p + 2 * d) }; };
+const sigLine = s => { const l = lv(s); return `${s.sym} · giriş ${s.price}₺ · hedef ${l.tgt}₺ · stop ${l.stop}₺`; };
+const SHOW = 5;   // mesajda taraf başına en güçlü 5 (tam liste: /tara)
+function buildScanMsg(signals, gErr = 0, newSet = null, full = false) {   // newSet: bugün İLK KEZ AL olanlar → 🆕
   const _as = s => (s.confidence || 0) + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.ret60 || 0) * 0.3;
   const AL = signals.filter(s => s.signal === "AL").sort((a, b) => _as(b) - _as(a)), SA = signals.filter(s => s.signal === "SAT");
   const f = s => (newSet?.has(s.sym) ? "🆕 " : "") + sigLine(s);
-  // Kullanıcı isteği (2026-11-27): "Diğer" kısa listesi YOK — her AL/SAT ayrıntılı satırla (uzun mesajı sendTG parçalar)
-  const sec = (title, arr) => !arr.length ? "" : `\n\n${title} (${arr.length}):\n` + arr.map(f).join("\n");
+  const sec = (title, arr) => { if (!arr.length) return ""; const n = full ? arr.length : Math.min(SHOW, arr.length);
+    return `\n\n${title}${arr.length > n ? ` — en güçlü ${n} (toplam ${arr.length})` : ""}:\n` + arr.slice(0, n).map(f).join("\n"); };
   let m = "🦅 EAGLE EYE — HİSSE TARA (motor)\n" + fmtTime();
   if (!signals.length) m += "\n\n⚠ Tarama 0 sinyal döndü — Yahoo/veri kaynağı geçici sorun olabilir.";
-  m += sec("📈 AL", AL) + sec("📉 SAT", SA);
+  m += sec("🟢 AL", AL) + sec("🔴 SAT", SA);
+  if (!full && (AL.length > SHOW || SA.length > SHOW)) m += "\n\nTam liste: /tara";
   if (gErr) m += `\n\n⛔ GIST ERİŞİLEMİYOR (HTTP ${gErr}) — ${[401, 403, 404].includes(gErr) ? "GH_GIST_TOKEN süresi dolmuş/geçersiz (veya GIST_ID yanlış): GitHub'da yeni token (gist yetkili) oluştur, repo Settings → Secrets → GH_GIST_TOKEN'ı güncelle." : "geçici olabilir."} Bu sürede AI TRADER işlem yapmaz, komutlar cevaplanmaz; portföy korunur.`;
   return m + "\n\n⚠ Yatırım tavsiyesi değildir · ~15dk gecikmeli olabilir.";
 }
@@ -576,6 +580,8 @@ async function handleCommands(st, ctx = {}) {   // ctx: { signals, bearRegime } 
       await sendTG(`🔧 AI TEST\n• Gemini (${d.geminiModel}): ${d.gemini}\n• Grok (${d.grokModel}): ${d.grok}`); replied++; await sleep(300);
     } else if (txt === "/komutlar" || txt === "/help" || txt === "/yardim" || txt === "/yardım") {
       await sendTG(HELP); replied++; await sleep(300);
+    } else if (txt === "/tara") {
+      await sendTG(buildScanMsg(ctx.signals || [], 0, null, true)); replied++; await sleep(300);
     } else if (txt === "/model") {
       await sendTG(await modelStatus(st)); replied++; await sleep(300);
     } else if (txt === "/takip") {
@@ -812,7 +818,7 @@ async function runSummaryMode() {
   if (ok) { st.lastSummaryDay = istD; await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } }); }
   console.log(`Gün sonu özeti ${ok ? "gönderildi" : "GÖNDERİLEMEDİ"}`);
 }
-const HELP = "🤖 KOMUTLAR\n/durum — AI TRADER anlık\n/performans — işlem istatistiği\n/model — model portföy ve getirisi\n/takip — takip listesi (YEOTK, EUPWR, GESAN, ASTOR)\n/hisse SEMBOL — herhangi bir hisse için trade önerisi (örn. /hisse THYAO)\n/yorum SEMBOL — Grok ile X (Twitter) duyarlılığı\n/aitest — AI anahtar testi\n\nNot: bot seansta 15 dk'da bir çalışır → cevap en geç ~15 dk içinde; seans dışında bir sonraki çalışmada.";
+const HELP = "🤖 KOMUTLAR\n/durum — AI TRADER anlık\n/performans — işlem istatistiği\n/model — model portföy ve getirisi\n/takip — takip listesi (YEOTK, EUPWR, GESAN, ASTOR)\n/hisse SEMBOL — herhangi bir hisse için trade önerisi (örn. /hisse THYAO)\n/tara — tüm AL/SAT listesi (giriş · hedef · stop)\n/yorum SEMBOL — Grok ile X (Twitter) duyarlılığı\n/aitest — AI anahtar testi\n\nNot: bot seansta 15 dk'da bir çalışır → cevap en geç ~15 dk içinde; seans dışında bir sonraki çalışmada.";
 async function runPortfolioMode() {
   const st0 = await gistGet(PAPER_FILE, null), st = (st0 && st0 !== READ_FAILED && typeof st0.cash === "number" && st0.pos) ? st0 : null;
   const ok = await mpSend(st);

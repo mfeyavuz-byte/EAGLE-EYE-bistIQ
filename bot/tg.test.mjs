@@ -12,20 +12,19 @@ const mk = (n, signal, off = 0) => Array.from({ length: n }, (_, k) => ({ sym: n
   breakout: k % 7 === 0 ? 1 : 0, boTarget: 20 + k, preMom: k % 3 ? 60 : 0, er: 0.6, ret60: 20, news: k % 4 ? "📰+1.2" : "" }));
 const symsIn = m => new Set(m.match(/\bQ[A-Z]{3}\b/g) || []);
 
-console.log("HİSSE TARA mesajı — hiçbir sinyal kaybolmuyor mu:");
-for (const [nA, nS, label] of [[1, 81, "bugünkü gerçek durum (1 AL / 81 SAT)"], [3, 118, "geçmişin en kötü günü 2026-10-16 (3 AL / 118 SAT)"], [60, 135, "uç durum: 195 hissenin hepsi sinyal (60 AL / 135 SAT)"], [15, 15, "tam 15/15"], [4, 9, "az sinyal"]]) {
-  const sig = [...mk(nA, "AL"), ...mk(nS, "SAT", 500)];
-  const m = buildScanMsg(sig), got = symsIn(m);
-  ok(sig.every(s => got.has(s.sym)) && got.size === nA + nS, `${label}: ${got.size}/${nA + nS} hisse mesajda · ${m.length} krk`);
-  ok(m.includes(`📈 AL (${nA})`) && m.includes(`📉 SAT (${nS})`), `  başlıkta TOPLAM sayı: AL (${nA}) · SAT (${nS})`);
-  const detailed = m.split("\n").filter(l => /^Q[A-Z]{3} %/.test(l)).length;
-  ok(detailed === nA + nS && !m.includes("➕ Diğer"), `  HER hisse ayrıntılı satırda: ${detailed}/${nA + nS} ("Diğer" kısa listesi yok)`);
+console.log("HİSSE TARA — sade (en güçlü 5 + toplam) ve /tara tam liste:");
+for (const [nA, nS] of [[1, 81], [3, 118], [60, 135], [4, 3]]) {
+  const sig = [...mk(nA, "AL"), ...mk(nS, "SAT", 500)], m = buildScanMsg(sig), full = buildScanMsg(sig, 0, null, true);
+  const L = m.split("\n").filter(l => /^Q[A-Z]{3} · giriş/.test(l)), F = full.split("\n").filter(l => /^Q[A-Z]{3} · giriş/.test(l));
+  ok(L.length === Math.min(5, nA) + Math.min(5, nS) && (nA <= 5 || m.includes(`toplam ${nA}`)) && (nS <= 5 || m.includes(`toplam ${nS}`)), `${nA} AL / ${nS} SAT → mesajda ${L.length} satır, başlıkta toplam`);
+  ok(F.length === nA + nS && symsIn(full).size === nA + nS, `  /tara tam liste: ${F.length}/${nA + nS} hisse`);
+  ok(L.every(l => /^Q[A-Z]{3} · giriş [\d.]+₺ · hedef [\d.]+₺ · stop [\d.]+₺$/.test(l)), "  her satır YALNIZ giriş · hedef · stop");
 }
 {
-  const m = buildScanMsg([...mk(2, "AL"), ...mk(2, "SAT", 500)]), L = m.split("\n").filter(l => /^Q[A-Z]{3} %/.test(l));
-  ok(L.slice(0, 2).every(l => l.includes("stop") && l.includes("hedef")) && L.slice(2).every(l => !l.includes("stop") && !l.includes("hedef")), "AL satırında stop/hedef var, SAT satırında yok (alış yönlüydü)");
-  ok(buildScanMsg([]).includes("Tarama 0 sinyal"), "0 sinyal → uyarı satırı");
-  ok(buildScanMsg(mk(1, "AL"), 401).includes("⛔ GIST ERİŞİLEMİYOR (HTTP 401)"), "gist hatası satırı korunuyor");
+  const [a] = mk(1, "AL"), [sa] = mk(1, "SAT", 500); a.atr = 1; sa.atr = 1; a.price = sa.price = 50;
+  const la = buildScanMsg([a]).split("\n").find(l => l.startsWith(a.sym)), ls = buildScanMsg([sa]).split("\n").find(l => l.startsWith(sa.sym));
+  ok(la.endsWith("giriş 50₺ · hedef 54₺ · stop 48₺") && ls.endsWith("giriş 50₺ · hedef 46₺ · stop 52₺"), "AL: stop 2ATR altta, hedef 2R üstte · SAT: ters yön (" + ls.split(" · ").slice(1).join(" · ") + ")");
+  ok(buildScanMsg([]).includes("Tarama 0 sinyal") && buildScanMsg(mk(1, "AL"), 401).includes("⛔ GIST ERİŞİLEMİYOR (HTTP 401)"), "0 sinyal ve gist hatası satırları korunuyor");
 }
 
 console.log("sendTG — parçalama (satır kaybı yok, her parça ≤3900):");
