@@ -668,7 +668,7 @@ const earnTag = n => n != null && n <= 3 ? ` · ⚠ bilanço ${n} gün` : "";
 
 // ---------- TAKİP LİSTESİ (kullanıcının hisseleri) — her raporda AYRI mesaj + tetik geçilince ANINDA uyarı ----------
 // Kural botun kendisi: yalnız kalite filtrelerini geçen canlı sinyal AL/SAT sayılır; diğerleri BEKLE + tetik/destek seviyeleri.
-const WATCH = (process.env.WATCH || "YEOTK,EUPWR,GESAN,ASTOR").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+const WATCH = (process.env.WATCH || "AKSEN,ALARK,ASTOR,EUPWR,KCHOL,TRMET,XBANK,YEOTK").split(",").map(s => s.trim().toUpperCase()).filter(Boolean).sort();   // alfabetik; XBANK = bankacılık endeksi
 let _wCache = null;   // bir çalışmada tek hesap (uyarı + rapor aynı veriyi kullanır)
 // TEK HİSSE trade önerisi (takip listesi + /hisse komutu). Kural botun kendisi: kalite filtreli canlı sinyal AL/SAT, değilse BEKLE + tetik.
 async function ideaFor(sym, signals, bearRegime, st) {
@@ -692,10 +692,13 @@ async function ideaFor(sym, signals, bearRegime, st) {
     if (live?.signal === "AL" || live?.signal === "SAT") { const l = lv(live); lvl = `giriş ${c}₺ · hedef ${l.tgt}₺ · stop ${l.stop}₺${live.signal === "SAT" ? " (elde varsa çık)" : ""}`; }
     else { const g = trig?.t === "ma20" ? ma20 : trig?.t === "ma50" ? e.ma50 : hi20, dd = atr > 0 ? 2 * atr : g * 0.03; lvl = `alım tetiği ${r2(g)}₺ → hedef ${r2(g + 2 * dd)}₺ · stop ${r2(g - dd)}₺ (tetik gelmeden alma)`; }
     // ⚡ kısa vade durumu (gün sonu ölçümlü listeler)
-    const K = await shortTermC(), kt = !K ? "" : K.weakSet.has(sym) ? "\n   🧊 Bugün ≤−%4: kısa vadede uzak dur (ölçüm 3g −%1.3)"
-      : K.rev && K.top.some(x => x.sym === sym) ? "\n   🔄 Endeks dönüş günü: dipten en çok toparlananlar arasında (ölçüm 3g +%1.5)"
-      : K.strong.some(x => x.sym === sym) ? "\n   🚀 Güçlü kapanış (ölçüm 3g +%0.4)" : "";
-    return { sym, c, chg, trig, mark, text: `${sym} @${c}₺ (${chg == null ? "?" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"}) — ${head.split(" (")[0]}${earnTag(en)}\n   ${lvl}${trend === "düşüş" && !live ? " · düşüş trendi" : ""}${kt}` };
+    // KISA VADE YÖNÜ (yalnız ölçülmüş kurallar; 3 günlük ufuk): ↗ dönüş günü toparlanan / güçlü kapanış · ↘ sert düşüş · → sinyal yok
+    const K = await shortTermC(), kv = !K ? "→ veri yok" : K.weakSet.has(sym) ? "↘ zayıf (gün ≤−%4, düşüş sürebilir)"
+      : K.rev && K.top.some(x => x.sym === sym) ? "↗ dönüş günü güçlü toparlanan" : K.strong.some(x => x.sym === sym) ? "↗ güçlü kapanış" : "→ belirgin kısa vade sinyali yok";
+    const isIdx = /^X(BANK|U\d{3}|USIN|UMAL|UHIZ|ELKT|ILTM|GIDA|HOLD|TEKS|KMYA|METL|ULAS|TRZM|SGRT|SPOR)$/.test(sym);   // endeks: puan, ₺ değil
+    const out_ = { sym, c, chg, trig, mark, text: `${mark} ${sym} ${c}₺ (${chg == null ? "?" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"}) — ${head.split(" (")[0].replace(/^\S+ /, "")}${earnTag(en)}\n   Kısa vade: ${kv}\n   ${lvl}${trend === "düşüş" && !live ? " · ana trend düşüş" : ""}` };
+    if (isIdx) out_.text = out_.text.replace(/₺/g, "");
+    return out_;
   } catch (err) { return { sym, text: `${sym}: hata (${err.message})` }; }
 }
 async function watchEval(signals, bearRegime, st) {
@@ -705,7 +708,7 @@ async function watchEval(signals, bearRegime, st) {
 }
 async function watchMsg(signals, bearRegime, st) {
   const w = await watchEval(signals, bearRegime, st);
-  return `🎯 TAKİP LİSTESİ — trade önerisi\n${fmtTime()}\n\n` + w.map(x => x.text).join("\n\n") + "\n\nKural: yalnız botun kalite filtrelerini geçen sinyal AL/SAT; diğerleri BEKLE + tetik seviyesi.\n⚠ Yatırım tavsiyesi değildir.";
+  return `🎯 TAKİP LİSTESİ · ${fmtTime()}\n\n` + w.map(x => x.text).join("\n\n") + "\n\n⚠ Yatırım tavsiyesi değildir.";
 }
 // TETİK UYARISI: tetik seviyesi ALTINDAN ÜSTÜNE geçince (önceki taramada altındaydı) anında; hisse başına günde 1.
 async function watchAlerts(signals, bearRegime, st) {
@@ -855,7 +858,7 @@ async function runSummaryMode() {
   if (ok) { st.lastSummaryDay = istD; await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } }); }
   console.log(`Gün sonu özeti ${ok ? "gönderildi" : "GÖNDERİLEMEDİ"}`);
 }
-const HELP = "🤖 KOMUTLAR\n/durum — AI TRADER anlık\n/performans — işlem istatistiği\n/model — model portföy ve getirisi\n/takip — takip listesi (YEOTK, EUPWR, GESAN, ASTOR)\n/hisse SEMBOL — herhangi bir hisse için trade önerisi (örn. /hisse THYAO)\n/tara — tüm AL/SAT listesi (giriş · hedef · stop)\n/yorum SEMBOL — Grok ile X (Twitter) duyarlılığı\n/aitest — AI anahtar testi\n\nNot: bot seansta 15 dk'da bir çalışır → cevap en geç ~15 dk içinde; seans dışında bir sonraki çalışmada.";
+const HELP = "🤖 KOMUTLAR\n/durum — AI TRADER anlık\n/performans — işlem istatistiği\n/model — model portföy ve getirisi\n/takip — takip listesi (AKSEN, ALARK, ASTOR, EUPWR, KCHOL, TRMET, XBANK, YEOTK)\n/hisse SEMBOL — herhangi bir hisse için trade önerisi (örn. /hisse THYAO)\n/tara — tüm AL/SAT listesi (giriş · hedef · stop)\n/yorum SEMBOL — Grok ile X (Twitter) duyarlılığı\n/aitest — AI anahtar testi\n\nNot: bot seansta 15 dk'da bir çalışır → cevap en geç ~15 dk içinde; seans dışında bir sonraki çalışmada.";
 async function runPortfolioMode() {
   const st0 = await gistGet(PAPER_FILE, null), st = (st0 && st0 !== READ_FAILED && typeof st0.cash === "number" && st0.pos) ? st0 : null;
   const ok = await mpSend(st);
