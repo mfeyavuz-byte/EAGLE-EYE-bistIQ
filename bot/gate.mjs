@@ -5,7 +5,7 @@
 // Kullanım: node bot/gate.mjs [epochSaniye]   (verilmezse şimdi)
 import { pathToFileURL } from "node:url";
 
-export const OPEN = 600, CLOSE = 1080, MAX_WAIT = 300;   // dakika: 10:00 açılış · 18:00 kapanış · açılışı en çok 5 sa bekle
+export const OPEN = 615, CLOSE = 1080, MAX_WAIT = 315;   // dakika: 10:15 ilk tarama (seans 10:00; Yahoo ~15 dk gecikmeli → bugünün mumu otursun) · 18:00 · en çok 5¼ sa bekle
 
 export function gate(d = new Date()) {
   const p = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d);

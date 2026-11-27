@@ -5,7 +5,7 @@ name: EAGLE EYE — Otonom Motor Botu
 # ÇÖZÜM: tetiğin saatine güvenme.
 #  1) Cron HER SAAT tetikler (gecikse de gün içinde mutlaka biri gelir).
 #  2) Her koşu İstanbul saatine bakar (bot/gate.mjs): seans dışı → mesajsız hemen çıkar ·
-#     05:00–10:00 → 10:00'ı bekler · 10:00–18:00 → her 15 dk tarar (rapor 30 dk'da bir, YENİ AL anında).
+#     05:00–10:15 → 10:15'i bekler (Yahoo ~15 dk gecikmeli) · 10:15–18:00 → her 15 dk tarar (rapor 30 dk'da bir, YENİ AL anında).
 #  3) Bir iş en çok ~6 saat sürebildiği için süre dolunca kendini workflow_dispatch ile yeniden başlatır
 #     (dispatch gecikmesizdir) → seans 18:00'e kadar kesintisiz.
 #  4) 60 gün repo hareketsizliğinde GitHub zamanlayıcıyı kapatıyor (2026-10-26'da oldu) → her seansta "enable" keepalive.
