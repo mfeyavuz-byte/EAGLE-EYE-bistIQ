@@ -124,6 +124,8 @@ async function simulate(cfg, intraday, mode) {
   return { st, eq, bearDays: bearDays.n };
 }
 
+// EĞİTİM/TEST (ABD botundan): ilk %60 günün getirisi / son %40 günün getirisi — yeni kural İKİSİNDE de tabanı geçmeli
+const tt = st => { const e = st.equityLog || []; if (e.length < 10) return "?"; const k = Math.floor(e.length * 0.6); return `${((e[k].eq / START - 1) * 100).toFixed(2)}% / ${((e.at(-1).eq / e[k].eq - 1) * 100).toFixed(2)}%`; };
 const xu0 = DAY[days[0]].xuNow, xu1 = L.xuNow, fmt = n => Math.round(n).toLocaleString("tr-TR");
 const res = [];
 for (const [id, label, intraday, cfg, mode] of SCEN) { if ((OZET && id !== "B") || (ONLY.length && !ONLY.includes(id))) continue; res.push({ id, label, ...(await simulate(cfg, intraday, mode)) }); }
@@ -136,10 +138,10 @@ if (OZET) {   // haftalık Telegram özeti: yalnız BUGÜNKÜ KOD
   process.exit(leaks ? 1 : 0);
 }
 console.log(`\nSONUÇ${REV ? " (TERS gün içi yol)" : ""} — ${days[0]} → ${days.at(-1)} (${days.length} işlem günü · ${res[0].bearDays} gün düşüş rejimi) · başlangıç ${fmt(START)}₺ · aynı dönem XU100 %${((xu1 - xu0) / xu0 * 100).toFixed(1)}`);
-console.log("Sen. | Son değer   | Getiri  | Max DD | İşlem | İsabet | PF   | Beklenti/işlem | Açık poz");
+console.log("Sen. | Son değer   | Getiri  | Max DD | İşlem | İsabet | PF   | Beklenti/işlem | Açık poz | eğitim %60 / TEST %40");
 for (const r of res) {
   const p = perfStats(r.st);
-  console.log(`  ${r.id}  | ${fmt(r.eq).padStart(10)}₺ | ${((r.eq / START - 1) * 100).toFixed(2).padStart(6)}% | %${p.maxDD.toFixed(1).padStart(4)} | ${String(p.n).padStart(5)} | %${p.winR.toFixed(0).padStart(4)}  | ${(isFinite(p.pf) ? p.pf.toFixed(2) : "∞").padStart(4)} | ${(Math.round(p.expc) + "₺").padStart(14)} | ${Object.keys(r.st.pos).length}`);
+  console.log(`  ${r.id}  | ${fmt(r.eq).padStart(10)}₺ | ${((r.eq / START - 1) * 100).toFixed(2).padStart(6)}% | %${p.maxDD.toFixed(1).padStart(4)} | ${String(p.n).padStart(5)} | %${p.winR.toFixed(0).padStart(4)}  | ${(isFinite(p.pf) ? p.pf.toFixed(2) : "∞").padStart(4)} | ${(Math.round(p.expc) + "₺").padStart(14)} | ${Object.keys(r.st.pos).length} | ${tt(r.st)}`);
 }
 for (const r of res) console.log(`  ${r.id}: ${r.label}`);
 console.log("\nÇıkış sebebine göre (adet · toplam K/Z):");

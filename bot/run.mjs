@@ -13,6 +13,7 @@ import { positionScan } from "./position-scan.mjs";
 import { fetchNews } from "./news.mjs";
 import syms from "./symbols.json" with { type: "json" };
 import SECTORS from "./sectors.json" with { type: "json" };
+import MACRO from "./macro.json" with { type: "json" };
 import { analyzeNewsImpact } from "./news-impact.mjs";
 import { pathToFileURL } from "node:url";
 
@@ -91,7 +92,7 @@ const sigLine = s => { const l = lv(s); return `${s.sym} · giriş ${s.price}₺
 const SHOW = 5;   // mesajda taraf başına en güçlü 5 (tam liste: /tara)
 function buildScanMsg(signals, gErr = 0, newSet = null, full = false) {   // newSet: bugün İLK KEZ AL olanlar → 🆕
   const _as = s => (s.confidence || 0) + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.ret60 || 0) * 0.3;
-  const AL = signals.filter(s => s.signal === "AL").sort((a, b) => _as(b) - _as(a)), SA = signals.filter(s => s.signal === "SAT");
+  const AL = signals.filter(s => s.signal === "AL").sort((a, b) => (!!a.secWeak - !!b.secWeak) || _as(b) - _as(a)), SA = signals.filter(s => s.signal === "SAT");
   const f = s => (newSet?.has(s.sym) ? "🆕 " : "") + sigLine(s);
   const sec = (title, arr) => { if (!arr.length) return ""; const n = full ? arr.length : Math.min(SHOW, arr.length);
     return `\n\n${title}${arr.length > n ? ` — en güçlü ${n} (toplam ${arr.length})` : ""}:\n` + arr.slice(0, n).map(f).join("\n"); };
@@ -99,6 +100,8 @@ function buildScanMsg(signals, gErr = 0, newSet = null, full = false) {   // new
   if (!signals.length) m += "\n\n⚠ Tarama 0 sinyal döndü — Yahoo/veri kaynağı geçici sorun olabilir.";
   m += sec("🟢 AL", AL) + sec("🔴 SAT", SA);
   if (!full && (AL.length > SHOW || SA.length > SHOW)) m += "\n\nTam liste: /tara";
+  if (_staleNote) m += "\n\n" + _staleNote;
+  if (_macroNote) m += "\n\n" + _macroNote;
   if (gErr) m += `\n\n⛔ GIST ERİŞİLEMİYOR (HTTP ${gErr}) — ${[401, 403, 404].includes(gErr) ? "GH_GIST_TOKEN süresi dolmuş/geçersiz (veya GIST_ID yanlış): GitHub'da yeni token (gist yetkili) oluştur, repo Settings → Secrets → GH_GIST_TOKEN'ı güncelle." : "geçici olabilir."} Bu sürede AI TRADER işlem yapmaz, komutlar cevaplanmaz; portföy korunur.`;
   return m + "\n\n⚠ Yatırım tavsiyesi değildir · ~15dk gecikmeli olabilir.";
 }
@@ -368,7 +371,7 @@ async function runPaper(signals, xuNow, bearRegime = false, _test = null, mkt = 
 
   // Pozisyon yönetiminin TAMAMI (alım + satım) sadece BIST seansında: hafta içi 09:55–18:05.
   // Açılış (09:55) dahil → gece verilen kararlar sabah açılışta uygulanır.
-  const trading = _test && "forceTrading" in _test ? _test.forceTrading : isTradingHours();
+  const trading = (_test && "forceTrading" in _test ? _test.forceTrading : isTradingHours()) && !mkt.stale;   // veri bayatsa işlem YOK
   // MCP (bilanço kara listesi / zararda şirket / analist): her hisse GÜNDE 1 sorgulanır, sonuç state'te saklanır → filtre günün
   // TÜM taramalarında geçerli. Eskiden yalnız günün ilk taramasında uygulanıyor, sonrakilerde unutuluyordu.
   if (trading && !_test) {
@@ -599,6 +602,8 @@ async function handleCommands(st, ctx = {}) {   // ctx: { signals, bearRegime } 
       await sendTG(`🔧 AI TEST\n• Gemini (${d.geminiModel}): ${d.gemini}\n• Grok (${d.grokModel}): ${d.grok}`); replied++; await sleep(300);
     } else if (txt === "/komutlar" || txt === "/help" || txt === "/yardim" || txt === "/yardım") {
       await sendTG(HELP); replied++; await sleep(300);
+    } else if (txt === "/karne") {
+      const b = await ideasLoad(); await sendTG(b ? karneText(b, 30) + "\n\n" + karneText(b, 7) : "Karne okunamadı."); replied++; await sleep(300);
     } else if (txt === "/tara") {
       await sendTG(buildScanMsg(ctx.signals || [], 0, null, true)); replied++; await sleep(300);
     } else if (txt === "/model") {
@@ -651,7 +656,7 @@ function marketContext(signals, idxRows, xuNow, off = {}) {   // off.rs: yalnız
   for (const s of signals) { const sec = sectorOf(s.sym); if (sec) { secRS[sec] = (secRS[sec] || 0) + s.rs; secN[sec] = (secN[sec] || 0) + 1; } }
   const secAvg = Object.fromEntries(Object.keys(secRS).map(k => [k, secRS[k] / secN[k]]));
   const _sv = Object.values(secAvg).sort((a, b) => b - a); const _med = _sv.length ? _sv[Math.floor(_sv.length / 2)] : 0;
-  for (const s of signals) { const sec = sectorOf(s.sym); s.secStrong = !!(sec && secAvg[sec] != null && secAvg[sec] >= _med); s.leader = s.signal === "AL" && s.rs >= 5 && !!s.aboveMa50; }
+  for (const s of signals) { const sec = sectorOf(s.sym); s.secStrong = !!(sec && secAvg[sec] != null && secAvg[sec] >= _med); s.secWeak = !!(sec && secAvg[sec] != null && secAvg[sec] < _med); s.leader = s.signal === "AL" && s.rs >= 5 && !!s.aboveMa50; }
   return { signals, bearRegime, breadth, volScale, idxRet60, xuMA200, sd, rsCut: n0 - signals.length };
 }
 
@@ -698,6 +703,7 @@ async function ideaFor(sym, signals, bearRegime, st) {
     const isIdx = /^X(BANK|U\d{3}|USIN|UMAL|UHIZ|ELKT|ILTM|GIDA|HOLD|TEKS|KMYA|METL|ULAS|TRZM|SGRT|SPOR)$/.test(sym);   // endeks: puan, ₺ değil
     const out_ = { sym, c, chg, trig, mark, text: `${mark} ${sym} ${c}₺ (${chg == null ? "?" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"}) — ${head.split(" (")[0].replace(/^\S+ /, "")}${earnTag(en)}\n   Kısa vade: ${kv}\n   ${lvl}${trend === "düşüş" && !live ? " · ana trend düşüş" : ""}` };
     if (isIdx) out_.text = out_.text.replace(/₺/g, "");
+    out_.atr = atr;
     return out_;
   } catch (err) { return { sym, text: `${sym}: hata (${err.message})` }; }
 }
@@ -723,6 +729,7 @@ async function watchAlerts(signals, bearRegime, st) {
     st.watchPrev[x.sym] = x.trig.t + ":" + (x.trig.hit ? 1 : 0);
   }
   if (!hits.length) return 0;
+  for (const x of hits) if (x.atr > 0 && !/^X[A-Z]/.test(x.sym)) _newIdeas.push({ k: "TETIK", sym: x.sym, d: d, e: x.c, s: +(x.c - 2 * x.atr).toFixed(2), t: +(x.c + 4 * x.atr).toFixed(2), h: 10 });
   await sendTG(`🎯 TETİK — takip listesi · ${fmtTime()}\n` + hits.map(x => `${x.sym} @${x.c}₺: ${x.trig.text}`).join("\n") + "\n\nGün içi fiyat; teyit için kapanışı bekle.\n⚠ Yatırım tavsiyesi değildir.");
   return 1;
 }
@@ -854,11 +861,74 @@ async function runSummaryMode() {
   const st = await gistGet(PAPER_FILE, null), istD = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" });
   if (!st || st === READ_FAILED || typeof st.cash !== "number") { console.error("Gün sonu: gist okunamadı"); return; }
   if (st.lastSummaryDay === istD && process.env.MODE !== "summary") { console.log("Gün sonu özeti bugün zaten gönderildi."); return; }
-  const ok = await sendTG(await daySummary(st));
+  // FİKİR KARNESİ: açık fikirleri sonuçlandır (HEDEF / STOP / SÜRE, R katı), bugünün kısa vade fikirlerini kaydet, eşiği ayarla
+  let karne = "";
+  try {
+    const b = await ideasEval();
+    if (b) {
+      karne = karneText(b, 30);
+      const old = st.alertMinConf || 65, nw = tuneMinConf(b, old);
+      if (nw !== old) { st.alertMinConf = nw; karne += `\n🎚 Yeni AL bildirimi eşiği: güven ≥%${nw} (karne: %${old} eşiğinde ortalama R ≤ 0; yalnız sıkılaşır)`; }
+    }
+    const k = await shortTermC();
+    if (k) { const items = [...(k.rev ? k.top.map(r => ({ ...r, kk: "DONUS" })) : []), ...k.strong.map(r => ({ ...r, kk: "GUCLU" }))];
+      await ideasAdd(items.filter(r => r.atr > 0).map(r => ({ k: r.kk, sym: r.sym, d: k.day, e: r.c, s: +(r.c - 2 * r.atr).toFixed(2), t: +(r.c + 4 * r.atr).toFixed(2), h: 3 }))); }
+  } catch (e) { console.error("Fikir karnesi:", e.message); }
+  const ok = await sendTG(await daySummary(st) + (karne ? "\n\n" + karne : ""));
   if (ok) { st.lastSummaryDay = istD; await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } }); }
   console.log(`Gün sonu özeti ${ok ? "gönderildi" : "GÖNDERİLEMEDİ"}`);
 }
-const HELP = "🤖 KOMUTLAR\n/durum — AI TRADER anlık\n/performans — işlem istatistiği\n/model — model portföy ve getirisi\n/takip — takip listesi (12 hisse/endeks)\n/hisse SEMBOL — herhangi bir hisse için trade önerisi (örn. /hisse THYAO)\n/tara — tüm AL/SAT listesi (giriş · hedef · stop)\n/yorum SEMBOL — Grok ile X (Twitter) duyarlılığı\n/aitest — AI anahtar testi\n\nNot: bot seansta 15 dk'da bir çalışır → cevap en geç ~15 dk içinde; seans dışında bir sonraki çalışmada.";
+// ---------- FİKİR KARNESİ (ABD botundan): gönderilen her fikir kaydedilir, ufku dolunca günlük mumlarla sonuçlanır ----------
+// Fikir: { k: AL|TETIK|DONUS|GUCLU, sym, d (giriş günü), e (giriş), s (stop), t (hedef), h (ufuk, işlem günü), conf? }
+// Sonuç: giriş gününden SONRAKİ mumlarda önce stop'a bakılır (aynı mumda ikisi = STOP, temkinli), sonra hedef; ufuk dolarsa SÜRE (kapanıştan).
+const IDEAS = "eagle_ideas.json", _newIdeas = [];
+async function ideasLoad() { const x = await gistGet(IDEAS, { open: [], closed: [] }); return x === READ_FAILED || !x ? null : { open: x.open || [], closed: x.closed || [] }; }
+async function ideasAdd(items) {
+  if (!items.length) return; const b = await ideasLoad(); if (!b) return;
+  const key = i => i.k + ":" + i.sym + ":" + i.d, have = new Set([...b.open, ...b.closed].map(key));
+  let n = 0; for (const i of items) if (!have.has(key(i)) && i.e > i.s && i.t > i.e) { b.open.push(i); have.add(key(i)); n++; }
+  if (n) await gistPut({ [IDEAS]: { content: JSON.stringify(b) } });
+}
+async function ideasEval() {
+  const b = await ideasLoad(); if (!b) return null;
+  const still = [];
+  for (const i of b.open) {
+    const after = (await fetchDaily(i.sym).catch(() => [])).filter(x => istDayOf(x.ts) > i.d); let res = null;
+    for (let n = 0; n < after.length; n++) { const x = after[n];
+      if (x.low <= i.s) { res = { r: "STOP", x: i.s }; break; } if (x.high >= i.t) { res = { r: "HEDEF", x: i.t }; break; } if (n + 1 >= i.h) { res = { r: "SÜRE", x: x.close }; break; } }
+    if (res) b.closed.push({ ...i, ...res, R: +((res.x - i.e) / (i.e - i.s)).toFixed(2), cd: istDayOf(after.at(-1).ts) }); else still.push(i);
+  }
+  b.open = still; b.closed = b.closed.slice(-500);
+  await gistPut({ [IDEAS]: { content: JSON.stringify(b) } });
+  return b;
+}
+const KN = { AL: "🔔 Yeni AL", TETIK: "🎯 Takip tetiği", DONUS: "🔄 Dönüş günü", GUCLU: "🚀 Güçlü kapanış" };
+function karneText(b, days) {
+  const lim = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10), c = b.closed.filter(x => x.cd >= lim);
+  if (!c.length) return `📒 KARNE (${days} gün): henüz sonuçlanan fikir yok · açık ${b.open.length}`;
+  const g = {}; for (const x of c) (g[x.k] = g[x.k] || []).push(x);
+  return `📒 KARNE (${days} gün · açık ${b.open.length})\n` + Object.entries(g).map(([k, a]) => `${KN[k] || k}: ${a.length} fikir · hedef ${a.filter(x => x.r === "HEDEF").length} · stop ${a.filter(x => x.r === "STOP").length} · süre ${a.filter(x => x.r === "SÜRE").length} · isabet %${Math.round(a.filter(x => x.R > 0).length / a.length * 100)} · ort ${(a.reduce((p, x) => p + x.R, 0) / a.length).toFixed(2)}R`).join("\n");
+}
+// EŞİK AYARI (ABD botundan): son 90 gün ≥20 sonuçlanmış AL fikri olan eşiklerden; mevcut eşikte ort. R ≤ 0 ise ort. R > 0 olan EN DÜŞÜK
+// daha yüksek eşik seçilir. Yalnız SIKILAŞIR (bot kendi kendine gevşemez).
+function tuneMinConf(b, cur) {
+  const lim = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10), a = b.closed.filter(x => x.k === "AL" && x.cd >= lim && x.conf != null);
+  const st_ = t => { const s = a.filter(x => x.conf >= t); return { n: s.length, r: s.length ? s.reduce((p, x) => p + x.R, 0) / s.length : 0 }; };
+  const c = st_(cur); if (c.n < 20 || c.r > 0) return cur;
+  for (const t of [75, 85, 90]) if (t > cur) { const s = st_(t); if (s.n >= 20 && s.r > 0) return t; }
+  return cur;
+}
+// MAKRO TAKVİM: TCMB PPK (bot/macro.json) + TÜİK enflasyon (her ayın 3'ü; hafta sonuysa ilk iş günü) 10:00
+function macroToday(d) {
+  const out = [];
+  if ((MACRO.ppk || []).includes(d)) out.push("TCMB faiz kararı 14:00");
+  const [y, mo] = d.split("-").map(Number); let c = new Date(Date.UTC(y, mo - 1, 3)); while ([0, 6].includes(c.getUTCDay())) c = new Date(c.getTime() + 864e5);
+  if (c.toISOString().slice(0, 10) === d) out.push("TÜİK enflasyon verisi 10:00");
+  return out;
+}
+const istHM = () => { const p = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()); return +p.find(x => x.type === "hour").value * 60 + +p.find(x => x.type === "minute").value; };
+let _staleNote = "", _macroNote = "";
+const HELP = "🤖 KOMUTLAR\n/durum — AI TRADER anlık\n/performans — işlem istatistiği\n/model — model portföy ve getirisi\n/takip — takip listesi (12 hisse/endeks)\n/hisse SEMBOL — herhangi bir hisse için trade önerisi (örn. /hisse THYAO)\n/tara — tüm AL/SAT listesi (giriş · hedef · stop)\n/karne — gönderilen fikirlerin sonucu (HEDEF/STOP/SÜRE, 7 ve 30 gün)\n/yorum SEMBOL — Grok ile X (Twitter) duyarlılığı\n/aitest — AI anahtar testi\n\nNot: bot seansta 15 dk'da bir çalışır → cevap en geç ~15 dk içinde; seans dışında bir sonraki çalışmada.";
 async function runPortfolioMode() {
   const st0 = await gistGet(PAPER_FILE, null), st = (st0 && st0 !== READ_FAILED && typeof st0.cash === "number" && st0.pos) ? st0 : null;
   const ok = await mpSend(st);
@@ -879,6 +949,14 @@ async function main() {
 
   // ---------- GÖRELİ GÜÇ (RS vs XU100) + SEKTÖR LİDERLİĞİ + PİYASA REJİMİ ----------
   const idxRows = await fetchDaily("XU100").catch(() => []);
+  // CANLI VERİ DENETİMİ (ABD botundan): seans içinde (10:20 sonrası; Yahoo ~15 dk gecikmeli) XU100'ün son mumu BUGÜN değilse ya da son fiyat
+  // 45 dk'dan eskiyse veri bayat → AI TRADER işlem yapmaz, yeni AL bildirimi gitmez, raporda ⛔ satırı (2026-11-28 "bot bugünü görmüyordu" dersi).
+  {
+    const todayIst = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" }), hm = istHM(), xl = idxRows.at(-1), age = idxRows.t ? (Date.now() - idxRows.t) / 60000 : null;
+    if (isTradingHours() && hm >= 620 && hm <= 1080 && (!xl || istDayOf(xl.ts) !== todayIst || (age != null && age > 45)))
+      _staleNote = `⛔ VERİ BAYAT: XU100 son veri ${!xl ? "yok" : istDayOf(xl.ts) !== todayIst ? istDayOf(xl.ts) + " tarihli (bugün değil — tatil ya da Yahoo sorunu)" : Math.round(age) + " dk önce"} → bu taramada AI TRADER işlem yapmadı, yeni AL bildirimi gönderilmedi.`;
+    const mc_ = macroToday(todayIst); if (mc_.length) _macroNote = "📅 Bugün: " + mc_.join(" · ") + " — açıklama saatine yakın kırılımlara temkinli yaklaş (sahte kırılım riski).";
+  }
   const mc = marketContext(signals, idxRows, xuNow);
   signals = mc.signals;
   const { bearRegime, breadth, volScale } = mc;
@@ -925,7 +1003,7 @@ async function main() {
   let st = null;
   if (GIST_ID && GIST_TOKEN) {
     // MCP olay/analist/temel katmanı — yalnız en güçlü 6 AL adayı (hız + fail-safe; bot sunucu-tarafı, CORS yok)
-    st = await runPaper(signals, xuNow, bearRegime, null, { breadth, volScale, idxRet60: mc.idxRet60 });
+    st = await runPaper(signals, xuNow, bearRegime, null, { breadth, volScale, idxRet60: mc.idxRet60, stale: !!_staleNote });
   } else {
     console.log("⚠ Gist yok — AI TRADER atlandı (state kalıcı olmadan paper trading her çalışmada sıfırlanır). GH_GIST_TOKEN + GIST_ID secret'larını ekle.");
   }
@@ -951,14 +1029,22 @@ async function main() {
     const seen = new Set(st.alSeen.s), fresh = signals.filter(s => s.signal === "AL" && !seen.has(s.sym));
     if (fresh.length) {
       newSet = new Set(fresh.map(s => s.sym)); st.alSeen.s.push(...newSet);
-      if (!doReport && isTradingHours()) { await sendTG(`🔔 YENİ AL SİNYALİ · ${fmtTime()}\n` + fresh.map(sigLine).join("\n") + "\n\n⚠ Yatırım tavsiyesi değildir."); sent++; }
+      const minC = st.alertMinConf || 65, al = fresh.filter(s => (s.confidence || 0) >= minC);   // karneye göre eşik (yalnız sıkılaşır)
+      if (!doReport && isTradingHours() && !_staleNote && al.length) { await sendTG(`🔔 YENİ AL SİNYALİ · ${fmtTime()}\n` + al.map(sigLine).join("\n") + (_macroNote ? "\n" + _macroNote : "") + "\n\n⚠ Yatırım tavsiyesi değildir."); sent++; }
+      if (isTradingHours() && !_staleNote) for (const s of al) { const l = lv(s); _newIdeas.push({ k: "AL", sym: s.sym, d: istDay, e: s.price, s: l.stop, t: l.tgt, h: 10, conf: s.confidence || 0 }); }
       dirty = true;
     }
   }
   // Son taramanın özeti (gün sonu özeti için): AL/SAT listeleri + takip hisselerinin canlı sinyali
   if (st) { st.lastScan = { t: Date.now(), al: signals.filter(s => s.signal === "AL").map(s => s.sym), sat: signals.filter(s => s.signal === "SAT").map(s => s.sym), w: Object.fromEntries(signals.filter(s => WATCH.includes(s.sym)).map(s => [s.sym, { signal: s.signal, confidence: s.confidence, stopLoss: s.stopLoss, target1: s.target1, dip: s.dip }])) }; dirty = true; }
-  // ANINDA UYARILAR (seans içinde her tarama): takip listesi tetiği + kapanışa yakın model portföy stop'u
-  if (st && isTradingHours()) {
+  // BOT DURDU UYARISI (ABD botundan): seans içinde aynı gün önceki çalışmadan 45 dk+ geçtiyse (GitHub zamanlayıcı gecikmesi) bildir
+  if (st) {
+    const prev = st.lastRunAt;
+    if (isTradingHours() && prev && istDayOf(prev) === istDay && Date.now() - prev > 45 * 60000) { await sendTG(`⚠ Bot ${Math.round((Date.now() - prev) / 60000)} dk çalışmadı (GitHub zamanlayıcı gecikmesi) — şimdi yeniden çalışıyor. Bu arada AL/SAT ve stop kontrolleri yapılamadı.`); sent++; }
+    st.lastRunAt = Date.now(); dirty = true;
+  }
+  // ANINDA UYARILAR (seans içinde her tarama): takip listesi tetiği + kapanışa yakın model portföy stop'u — veri bayatsa YOK
+  if (st && isTradingHours() && !_staleNote) {
     try { sent += await watchAlerts(signals, bearRegime, st); dirty = true; } catch (e) { console.error("Tetik uyarısı:", e.message); }
     // 🔄 ENDEKS DÖNÜŞÜ (gün içi, günde 1): XU100 bugün dünkü kapanışın ≤%1 altına indi ve şimdi üstünde → anında + o anki en çok toparlananlar
     try {
@@ -972,6 +1058,7 @@ async function main() {
     if (istHour * 60 + istMin >= 1050) { try { sent += await mpStops(st); dirty = true; } catch (e) { console.error("Model stop:", e.message); } }
   }
   if (st && dirty && !doReport) await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });   // rapor taramasında aşağıda kaydedilir
+  if (_newIdeas.length) { try { await ideasAdd(_newIdeas); } catch (e) { console.error("Fikir karnesi:", e.message); } }
 
   if (doReport) {
     // 1) HİSSE TARA — TÜM AL/SAT (en güçlü 15 ayrıntılı + kalanı kısa liste)
@@ -1061,7 +1148,7 @@ async function main() {
         } catch (e) { console.error("Haber arşivi:", e.message); }
       }
       // MODEL PORTFÖY yedeği: Pazartesi 08:00 gönderimi kaçtıysa haftanın İLK seans raporunda gönder (haftada 1)
-      if (isTradingHours() && st.lastMPWeek !== weekKey(Date.now())) { try { if (await mpSend(st)) { st.lastMPWeek = weekKey(Date.now()); sent++; } } catch (e) { console.error("Model portföy:", e.message); } }
+      if (isTradingHours() && !_staleNote && st.lastMPWeek !== weekKey(Date.now())) { try { if (await mpSend(st)) { st.lastMPWeek = weekKey(Date.now()); sent++; } } catch (e) { console.error("Model portföy:", e.message); } }
       st.lastReportHour = istHour; st.lastReportSlot = slot; st.lastReportDay = istDay; st.hourOpens = []; st.hourCloses = [];
       await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } });
       console.log(`Rapor gönderildi · değer ~${Math.round(eq)}₺ · getiri ${portRet.toFixed(2)}% · poz ${openLines.length}`);
@@ -1083,4 +1170,5 @@ if (import.meta.url === _entry) {
 }
 export const _setWatchCache = v => { _wCache = v; };   // yalnız test
 export { shortCore };
+export { ideasAdd, ideasEval, ideasLoad, karneText, tuneMinConf, macroToday };
 export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, ideaFor, daySummary, modelStatus, HELP, shortTerm, shortTermMsg, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };

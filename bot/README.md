@@ -44,7 +44,7 @@ Actions → **EAGLE EYE — Otonom Motor Botu** → Run workflow → ~15 sn → 
 ```bash
 TG_TOKEN=xxx TG_CHAT=yyy GH_GIST_TOKEN=zzz GIST_ID=www node bot/run.mjs
 ```
-Ağsız testler (hiçbir istek dışarı gitmez): `node bot/runpaper.test.mjs` (AI TRADER zinciri) · `node bot/ai.test.mjs` (Grok/Gemini çıktısı nereye gidiyor: günlük yorum, `/yorum`, `/aitest`, anahtar yok / hata durumları) · `node bot/tg.test.mjs` (HİSSE TARA hiçbir AL/SAT'ı düşürmüyor mu, uzun mesaj bölme, Telegram 429/5xx'te yeniden gönderim) · `node bot/data.test.mjs` (Yahoo haftalık çift mum, gelecek sızıntısı).
+Ağsız testler (hiçbir istek dışarı gitmez): `node bot/runpaper.test.mjs` (AI TRADER zinciri) · `node bot/ai.test.mjs` (Grok/Gemini çıktısı nereye gidiyor: günlük yorum, `/yorum`, `/aitest`, anahtar yok / hata durumları) · `node bot/tg.test.mjs` (HİSSE TARA hiçbir AL/SAT'ı düşürmüyor mu, uzun mesaj bölme, Telegram 429/5xx'te yeniden gönderim) · `node bot/data.test.mjs` (Yahoo haftalık çift mum, gelecek sızıntısı, boş kapanış) · `node bot/karne.test.mjs` (fikir karnesi, eşik ayarı, makro takvim).
 
 **Portföy simülatörü** (strateji değişikliğini canlıya almadan ölç): `node bot/portfolio-sim.mjs [başlangıç-tarihi] [--ters-yol]` → AI TRADER'ı geçmişte gün gün canlı kodla oynatır, senaryoları (çıkış kuralları) tablo halinde karşılaştırır. Gist/Telegram'a yazmaz.
 

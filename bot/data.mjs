@@ -23,6 +23,7 @@ async function yfetch(sym, interval, range, timeout=8000){
         const o=q.open[D]??cl, h=Math.max(q.high[D]??cl,cl), l=Math.min(q.low[D]??cl,cl);
         rows.push({ts:S*1e3,date:'',close:+(+cl).toFixed(2),open:+(+o).toFixed(2),high:+(+h).toFixed(2),low:+(+l).toFixed(2),volume:q.volume[D]??0});
       });
+      rows.t = mt ? mt * 1000 : null;   // son fiyatın zamanı (canlı veri denetimi için)
       return rows;
     }catch(e){ continue; }
     finally{ clearTimeout(tid); }               // sayaç gövde okunana kadar açık: gövdede takılma = sonsuz bekleme olmasın
