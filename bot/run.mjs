@@ -668,7 +668,7 @@ const earnTag = n => n != null && n <= 3 ? ` · ⚠ bilanço ${n} gün` : "";
 
 // ---------- TAKİP LİSTESİ (kullanıcının hisseleri) — her raporda AYRI mesaj + tetik geçilince ANINDA uyarı ----------
 // Kural botun kendisi: yalnız kalite filtrelerini geçen canlı sinyal AL/SAT sayılır; diğerleri BEKLE + tetik/destek seviyeleri.
-const WATCH = (process.env.WATCH || "AKSEN,ALARK,ASTOR,EUPWR,KCHOL,TRMET,XBANK,YEOTK").split(",").map(s => s.trim().toUpperCase()).filter(Boolean).sort();   // alfabetik; XBANK = bankacılık endeksi
+const WATCH = (process.env.WATCH || "AKSEN,ALARK,ASELS,ASTOR,EUPWR,KCHOL,PGSUS,THYAO,TRMET,TUPRS,XBANK,YEOTK").split(",").map(s => s.trim().toUpperCase()).filter(Boolean).sort();   // alfabetik; XBANK = bankacılık endeksi
 let _wCache = null;   // bir çalışmada tek hesap (uyarı + rapor aynı veriyi kullanır)
 // TEK HİSSE trade önerisi (takip listesi + /hisse komutu). Kural botun kendisi: kalite filtreli canlı sinyal AL/SAT, değilse BEKLE + tetik.
 async function ideaFor(sym, signals, bearRegime, st) {
@@ -858,7 +858,7 @@ async function runSummaryMode() {
   if (ok) { st.lastSummaryDay = istD; await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } }); }
   console.log(`Gün sonu özeti ${ok ? "gönderildi" : "GÖNDERİLEMEDİ"}`);
 }
-const HELP = "🤖 KOMUTLAR\n/durum — AI TRADER anlık\n/performans — işlem istatistiği\n/model — model portföy ve getirisi\n/takip — takip listesi (AKSEN, ALARK, ASTOR, EUPWR, KCHOL, TRMET, XBANK, YEOTK)\n/hisse SEMBOL — herhangi bir hisse için trade önerisi (örn. /hisse THYAO)\n/tara — tüm AL/SAT listesi (giriş · hedef · stop)\n/yorum SEMBOL — Grok ile X (Twitter) duyarlılığı\n/aitest — AI anahtar testi\n\nNot: bot seansta 15 dk'da bir çalışır → cevap en geç ~15 dk içinde; seans dışında bir sonraki çalışmada.";
+const HELP = "🤖 KOMUTLAR\n/durum — AI TRADER anlık\n/performans — işlem istatistiği\n/model — model portföy ve getirisi\n/takip — takip listesi (12 hisse/endeks)\n/hisse SEMBOL — herhangi bir hisse için trade önerisi (örn. /hisse THYAO)\n/tara — tüm AL/SAT listesi (giriş · hedef · stop)\n/yorum SEMBOL — Grok ile X (Twitter) duyarlılığı\n/aitest — AI anahtar testi\n\nNot: bot seansta 15 dk'da bir çalışır → cevap en geç ~15 dk içinde; seans dışında bir sonraki çalışmada.";
 async function runPortfolioMode() {
   const st0 = await gistGet(PAPER_FILE, null), st = (st0 && st0 !== READ_FAILED && typeof st0.cash === "number" && st0.pos) ? st0 : null;
   const ok = await mpSend(st);
