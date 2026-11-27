@@ -685,7 +685,17 @@ async function ideaFor(sym, signals, bearRegime, st) {
     else if (trend === "düşüş" && e.ma50) { mark = "⚪"; head = `⚪ BEKLE${why}`; plan = `Düşüş trendinde alım yok; önce MA50 ${e.ma50.toFixed(2)}₺ üstü kapanış gerekir. Destek 20g dip ${lo20}₺.`; trig = { t: "ma50", hit: c > e.ma50, text: `MA50 ${e.ma50.toFixed(2)}₺ üstüne çıktı (düşüş trendinden çıkış denemesi)` }; }
     else { mark = "⚪"; head = `⚪ BEKLE${why}`; plan = `Alım tetiği: ${hi20}₺ üstü hacimli kapanış · destek MA20 ${ma20.toFixed(2)}₺ / 20g dip ${lo20}₺.`; trig = { t: "hi20", hit: c > hi20, text: `20g zirve ${hi20}₺ üstüne çıktı (alım tetiği)` }; }
     const en = await earnDays(sym, st);
-    return { sym, c, chg, trig, mark, text: `${sym} @${c}₺ (${chg == null ? "?" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"}) — ${head}${earnTag(en)}\n   Trend ${trend} · RSI ${Math.round(e.rsi ?? 0)} · ADX ${Math.round(e.adx || 0)} · 20g aralık ${lo20}–${hi20}₺\n   ${plan}` };
+    // SADE SEVİYELER (AL/SAT mesajıyla aynı kural: stop 2×ATR, hedef 2R). BEKLE'de giriş = alım tetiği.
+    let tr = 0; for (let q = j - 13; q <= j; q++) tr += Math.max(d[q].high - d[q].low, Math.abs(d[q].high - d[q - 1].close), Math.abs(d[q].low - d[q - 1].close));
+    const atr = tr / 14, r2 = v => +v.toFixed(2);
+    let lvl;
+    if (live?.signal === "AL" || live?.signal === "SAT") { const l = lv(live); lvl = `giriş ${c}₺ · hedef ${l.tgt}₺ · stop ${l.stop}₺${live.signal === "SAT" ? " (elde varsa çık)" : ""}`; }
+    else { const g = trig?.t === "ma20" ? ma20 : trig?.t === "ma50" ? e.ma50 : hi20, dd = atr > 0 ? 2 * atr : g * 0.03; lvl = `alım tetiği ${r2(g)}₺ → hedef ${r2(g + 2 * dd)}₺ · stop ${r2(g - dd)}₺ (tetik gelmeden alma)`; }
+    // ⚡ kısa vade durumu (gün sonu ölçümlü listeler)
+    const K = await shortTermC(), kt = !K ? "" : K.weakSet.has(sym) ? "\n   🧊 Bugün ≤−%4: kısa vadede uzak dur (ölçüm 3g −%1.3)"
+      : K.rev && K.top.some(x => x.sym === sym) ? "\n   🔄 Endeks dönüş günü: dipten en çok toparlananlar arasında (ölçüm 3g +%1.5)"
+      : K.strong.some(x => x.sym === sym) ? "\n   🚀 Güçlü kapanış (ölçüm 3g +%0.4)" : "";
+    return { sym, c, chg, trig, mark, text: `${sym} @${c}₺ (${chg == null ? "?" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"}) — ${head.split(" (")[0]}${earnTag(en)}\n   ${lvl}${trend === "düşüş" && !live ? " · düşüş trendi" : ""}${kt}` };
   } catch (err) { return { sym, text: `${sym}: hata (${err.message})` }; }
 }
 async function watchEval(signals, bearRegime, st) {
@@ -776,6 +786,8 @@ function shortCore(data, x) {
     top: [...rows].sort((p, q) => q.rec - p.rec).slice(0, 10), strong: rows.filter(r => r.dr >= 4 && r.pos >= 0.8 && r.vr >= 1.5).sort((p, q) => q.dr - p.dr).slice(0, 10),
     weak: rows.filter(r => r.dr <= -4).sort((p, q) => p.dr - q.dr).slice(0, 10), weakSet: new Set(rows.filter(r => r.dr <= -4).map(r => r.sym)) };
 }
+let _stCache;   // bir çalışmada tek hesap (takip listesi + dönüş uyarısı + gün sonu aynı veriyi kullanır)
+const shortTermC = async () => _stCache !== undefined ? _stCache : (_stCache = await shortTerm().catch(() => null));
 async function shortTerm() {
   const data = {};
   for (let i = 0; i < syms.length; i += CONC) await Promise.all(syms.slice(i, i + CONC).map(async s => { data[s] = await fetchDaily(s).catch(() => []); }));
@@ -832,7 +844,7 @@ async function daySummary(st) {
   const ls = st.lastScan, alNew = st.alSeen?.d === istD ? st.alSeen.s : [];
   if (ls) m += `\n\n🦅 Son tarama: ${ls.al.length} AL · ${ls.sat.length} SAT${ls.al.length ? `\n   AL: ${ls.al.join(", ")}` : ""}`;
   m += `\n   Bugün ilk kez AL olan: ${alNew.join(", ") || "yok"}`;
-  try { const k = await shortTerm(); if (k) m += "\n\n" + shortTermMsg(k, true); } catch (e) { console.error("Kısa vade:", e.message); }
+  try { const k = await shortTermC(); if (k) m += "\n\n" + shortTermMsg(k, true); } catch (e) { console.error("Kısa vade:", e.message); }
   return m + "\n\n⚠ Yatırım tavsiyesi değildir.";
 }
 async function runSummaryMode() {
@@ -949,7 +961,7 @@ async function main() {
     try {
       const xt = idxRows.at(-1), xp = idxRows.at(-2)?.close;
       if (xt && xp && istDayOf(xt.ts) === istDay && st.revDay !== istDay && xt.low <= xp * 0.99 && xt.close > xp) {
-        const k = await shortTerm();
+        const k = await shortTermC();
         if (k?.rev) { await sendTG(`🔄 ENDEKS DÖNÜŞÜ (gün içi) · ${fmtTime()}\n` + shortTermMsg(k, false) + "\n\nGün içi fiyat (~15 dk gecikmeli); kesin liste gün sonu özetinde.\n⚠ Yatırım tavsiyesi değildir."); st.revDay = istDay; sent++; dirty = true; }
       }
     } catch (e) { console.error("Endeks dönüşü:", e.message); }
