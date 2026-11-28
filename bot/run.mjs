@@ -827,10 +827,14 @@ function shortCore(data, x) {
     const j = a.length - 1; if (j < 21 || istDayOf(a[j].ts) !== istDayOf(xt.ts)) continue;   // o gün işlem görmeyen hisse yok sayılır
     const t = a[j], pc = a[j - 1].close, v20 = a.slice(j - 20, j).reduce((p, b) => p + (b.volume || 0), 0) / 20; if (!pc || v20 * t.close < 5e6) continue;
     let tr = 0; for (let k = j - 13; k <= j; k++) tr += Math.max(a[k].high - a[k].low, Math.abs(a[k].high - a[k - 1].close), Math.abs(a[k].low - a[k - 1].close));
-    rows.push({ sym: s, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100, atr: tr / 14, avgVol: v20 });
+    // TRENDDE 3 GÜN DÜŞÜŞ (2026-11-28 ölçümü, günlük 2 yıl): MA50>MA200, fiyat MA50 üstü, 3 kapanış üst üste düşüş → 3g piyasaya +%0.26 (eğitim +0.24 / test +0.29)
+    let tr3 = false; if (j >= 200) { const cs = a.map(b => b.close), sm = n => cs.slice(j - n + 1, j + 1).reduce((p, v) => p + v, 0) / n, m50 = sm(50), m200 = sm(200);
+      tr3 = m50 > m200 && cs[j] > m50 && cs[j] < cs[j - 1] && cs[j - 1] < cs[j - 2] && cs[j - 2] < cs[j - 3]; }
+    rows.push({ sym: s, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100, atr: tr / 14, avgVol: v20, tr3 });
   }
   return { day: istDayOf(xt.ts), rev: xt.low <= xp * 0.99 && xt.close > xp, xDay: (xt.close / xp - 1) * 100, xLow: (xt.low / xp - 1) * 100,
     top: [...rows].sort((p, q) => q.rec - p.rec).slice(0, 10), strong: rows.filter(r => r.dr >= 4 && r.pos >= 0.8 && r.vr >= 1.5).sort((p, q) => q.dr - p.dr).slice(0, 10),
+    pull3: rows.filter(r => r.tr3 && r.dr > -4).sort((p, q) => p.dr - q.dr).slice(0, 10),
     weak: rows.filter(r => r.dr <= -4).sort((p, q) => p.dr - q.dr).slice(0, 10), weakSet: new Set(rows.filter(r => r.dr <= -4).map(r => r.sym)), ...rsi2Core(data, x) };
 }
 // RSI2 AŞIRI SATIM DÖNÜŞÜ (ABD botundan; BIST ölçümü 2 yıl): hisse 200g üstünde + RSI(2) < 5 → giriş kapanış, hedef 10g ort., stop −2 ATR, en çok 10 gün.
@@ -858,13 +862,28 @@ async function shortTerm() {
 }
 const istDayOf = ts => new Date(ts + 3 * 3600e3).toISOString().slice(0, 10);
 const stLine = r => `${r.sym} ${r.c}₺ ${pct(r.dr)}${r.rec != null ? ` · dipten +%${r.rec.toFixed(1)}` : ""}`;
+// ⚡ KISA VADE AL (1–3 gün) — yalnız ölçülmüş kaynaklar (3g piyasaya göre): dönüş günü toparlanan +%1.48 · güçlü kapanış +%0.39 ·
+// trendde 3g düşüş +%0.26 · RSI2 (XU100 MA200 üstü) rastgeleye +%0.4. Dışlanan: gün ≤−%4 (−%1.25) ve endeks ≤−%1 iken ≥+%1 (−%1.0).
+// Seviye (1–3 günlük işleme göre): giriş kapanış · stop 1×ATR (en çok %5) · hedef 1.5×ATR (en çok %7.5) · en çok 3 iş günü.
+// Kaynak başına kota (dönüş 5 · güçlü 3 · trend3 3 · RSI2 3), toplam ≤10. Karnede "KV" olarak ölçülür.
+function kvList(k) {
+  const seen = new Set(), out = [], lone = r => k.xDay <= -1 && r.dr >= 1;
+  const push = (r, why) => { if (seen.has(r.sym) || k.weakSet.has(r.sym) || lone(r) || !(r.atr > 0)) return false; seen.add(r.sym);
+    const sd = Math.min(r.atr, r.c * 0.05), td = Math.min(1.5 * r.atr, r.c * 0.075);
+    out.push({ ...r, why, stop: +(r.c - sd).toFixed(2), tgt: +(r.c + td).toFixed(2) }); return true; };
+  const take = (arr, why, n) => { let c = 0; for (const r of arr || []) { if (c >= n) break; if (push(r, why)) c++; } };
+  if (k.rev) take(k.top, "dönüş günü", 5);
+  take(k.strong, "güçlü kapanış", 3);
+  take(k.pull3, "trendde 3g düşüş", 3);
+  take((k.rsi2 || []).map(r => ({ sym: r.sym, c: r.c, dr: 0, atr: (r.c - r.stop) / 2 })), "RSI2 dönüşü", 3);
+  return out.slice(0, 10);
+}
 function shortTermMsg(k, final) {
-  let m = `⚡ KISA VADE (1–3 gün)${final ? " — gün sonu" : ""}`;
-  if (k.rev) m += `\n🔄 ENDEKS DÖNÜŞ GÜNÜ: XU100 gün içi ${pct(k.xLow)} → ${pct(k.xDay)}\n   Dipten en çok toparlananlar (ölçüm: 3 günde piyasayı ort. +%1.5 geçti; 18 gün, küçük örnek):\n   ` + k.top.map(stLine).join("\n   ")
-    + `\n   Ertesi gün XU100 ölçümü: ort +%0.45, %56 yükseliş.`;
-  m += `\n🚀 Güçlü kapanış (gün ≥+%4, tepeye yakın, hacimli; 3g piyasaya +%0.4): ` + (k.strong.length ? "\n   " + k.strong.map(r => `${r.sym} ${r.c}₺ ${pct(r.dr)}`).join("\n   ") : "bugün yok");
-  m += `\n🔄 Aşırı satım dönüşü (RSI2<5, 200g üstü; yalnız XU100 MA200 üstünde — ölçüm rastgeleye +%0.4, %64 kazanma): ` + (!k.upMkt ? "piyasa MA200 altında → liste yok (bu koşulda ölçüm −%10.9)" : k.rsi2?.length ? "\n   " + k.rsi2.map(r => `${r.sym} giriş ${r.c}₺ · hedef ${r.tgt}₺ · stop ${r.stop}₺ · en çok 10 gün`).join("\n   ") : "bugün yok");
-  m += `\n🧊 Uzak dur (gün ≤−%4; 3g piyasaya −%1.3, dipten alma): ` + (k.weak.length ? k.weak.map(r => `${r.sym} ${pct(r.dr)}`).join(", ") : "bugün yok");
+  const kv = kvList(k);
+  let m = `⚡ KISA VADE AL (1–3 gün)${final ? " — gün sonu" : ""}${k.rev ? `\n🔄 Endeks dönüş günü: XU100 gün içi ${pct(k.xLow)} → ${pct(k.xDay)} (ertesi gün ölçümü ort +%0.45)` : ""}`;
+  m += kv.length ? "\n" + kv.map(r => `🟢 ${r.sym} · giriş ${r.c}₺ · hedef ${r.tgt}₺ · stop ${r.stop}₺ · ${r.why}`).join("\n") : "\nBugün ölçülmüş kısa vade AL koşulu oluşmadı.";
+  m += `\n🧊 Uzak dur (gün ≤−%4; 3g piyasaya −%1.3): ` + (k.weak.length ? k.weak.map(r => `${r.sym} ${pct(r.dr)}`).join(", ") : "yok");
+  if (!k.upMkt) m += "\n(RSI2 dönüşü yalnız XU100 MA200 üstündeyken — şu an kapalı)";
   return m;
 }
 
@@ -925,9 +944,7 @@ async function runSummaryMode() {
       if (nw !== old) { st.alertMinConf = nw; karne += `\n🎚 Yeni AL bildirimi eşiği: güven ≥%${nw} (karne: %${old} eşiğinde ortalama R ≤ 0; yalnız sıkılaşır)`; }
     }
     const k = await shortTermC();
-    if (k) { const items = [...(k.rev ? k.top.map(r => ({ ...r, kk: "DONUS" })) : []), ...k.strong.map(r => ({ ...r, kk: "GUCLU" }))];
-      await ideasAdd([...items.filter(r => r.atr > 0).map(r => ({ k: r.kk, sym: r.sym, d: k.day, e: r.c, s: +(r.c - 2 * r.atr).toFixed(2), t: +(r.c + 4 * r.atr).toFixed(2), h: 3 })),
-        ...(k.rsi2 || []).map(r => ({ k: "RSI2", sym: r.sym, d: k.day, e: r.c, s: r.stop, t: r.tgt, h: 10 }))]); }
+    if (k) await ideasAdd(kvList(k).map(r => ({ k: "KV", sym: r.sym, d: k.day, e: r.c, s: r.stop, t: r.tgt, h: 3, why: r.why })));
   } catch (e) { console.error("Fikir karnesi:", e.message); }
   const ok = await sendTG(await daySummary(st) + (karne ? "\n\n" + karne : ""));
   // HAFTALIK KARNE (Cuma): haftanın fikir karnesi + AI TRADER / model portföy / XU100 haftası — tek mesaj
@@ -968,7 +985,7 @@ async function ideasEval() {
   await gistPut({ [IDEAS]: { content: JSON.stringify(b) } });
   return b;
 }
-const KN = { AL: "🔔 Yeni AL", TETIK: "🎯 Takip tetiği", DONUS: "🔄 Dönüş günü", GUCLU: "🚀 Güçlü kapanış", RSI2: "🔄 RSI2 dönüşü" };
+const KN = { AL: "🔔 Yeni AL", TETIK: "🎯 Takip tetiği", KV: "⚡ Kısa vade AL", DONUS: "🔄 Dönüş günü", GUCLU: "🚀 Güçlü kapanış", RSI2: "🔄 RSI2 dönüşü" };
 function karneText(b, days) {
   const lim = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10), c = b.closed.filter(x => x.cd >= lim);
   if (!c.length) return `📒 KARNE (${days} gün): henüz sonuçlanan fikir yok · açık ${b.open.length}`;
@@ -1254,5 +1271,5 @@ if (import.meta.url === _entry) {
 export const _setWatchCache = v => { _wCache = v; };   // yalnız test
 export { shortCore };
 export { ideasAdd, ideasEval, ideasLoad, karneText, tuneMinConf, macroToday };
-export { candlePatterns, tierOf, rsi2Core };
+export { candlePatterns, tierOf, rsi2Core, kvList };
 export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, ideaFor, daySummary, modelStatus, HELP, shortTerm, shortTermMsg, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
