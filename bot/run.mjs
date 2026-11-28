@@ -734,7 +734,9 @@ async function ideaFor(sym, signals, bearRegime, st) {
     // ⚡ kısa vade durumu (gün sonu ölçümlü listeler)
     // KISA VADE YÖNÜ (yalnız ölçülmüş kurallar; 3 günlük ufuk): ↗ dönüş günü toparlanan / güçlü kapanış · ↘ sert düşüş · → sinyal yok
     const K = await shortTermC(), kv = !K ? "→ veri yok" : K.weakSet.has(sym) ? "↘ zayıf (gün ≤−%4, düşüş sürebilir)"
-      : K.rev && K.top.some(x => x.sym === sym) ? "↗ dönüş günü güçlü toparlanan" : K.strong.some(x => x.sym === sym) ? "↗ güçlü kapanış" : "→ belirgin kısa vade sinyali yok";
+      : K.rev && K.top.some(x => x.sym === sym) ? "↗ dönüş günü güçlü toparlanan" : K.strong.some(x => x.sym === sym) ? "↗ güçlü kapanış"
+      // GÜN İÇİ ÖLÇÜMÜ (2 yıl saatlik): endeks ≤−%1 iken hisse ≥+%1 → sonraki 3 günde piyasaya −%1.0 (eğitim −0.75 / test −1.47) — tek başına yükseliş sürmüyor
+      : K.xDay <= -1 && chg != null && chg >= 1 ? "↘ endeks düşerken yükseliyor (ölçüm: 3 günde piyasanın ~%1 gerisinde kalma eğilimi)" : "→ belirgin kısa vade sinyali yok";
     const isIdx = /^X(BANK|U\d{3}|USIN|UMAL|UHIZ|ELKT|ILTM|GIDA|HOLD|TEKS|KMYA|METL|ULAS|TRZM|SGRT|SPOR)$/.test(sym);   // endeks: puan, ₺ değil
     const out_ = { sym, c, chg, trig, mark, text: `${mark} ${sym} ${c}₺ (${chg == null ? "?" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"}) — ${head.split(" (")[0].replace(/^\S+ /, "")}${earnTag(en)}\n   Kısa vade: ${kv}\n   ${lvl}${trend === "düşüş" && !live ? " · ana trend düşüş" : ""}` };
     if (isIdx) out_.text = out_.text.replace(/₺/g, "");
