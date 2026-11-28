@@ -63,7 +63,7 @@ console.log("Formasyonlar (paCore: Elliott ABC / 3. dalga / uyarılar):");
 {
   const { paCore, zigzag } = await import("./run.mjs"), B = (c, h = c * 1.005, l = c * 0.995) => ({ close: c, high: h, low: l, volume: 1e6 });
   const z = zigzag([100, 104, 108, 112, 100, 95, 101, 106].map(c => B(c, c, c)), 0.06);
-  ok(z.length === 2 && z[0].t === "H" && z[0].p === 112 && z[1].t === "L" && z[1].p === 95 && z[1].at === 6, "zigzag: tepe 112 (%6 düşüşle 4. günde onay), dip 95 (101 ≥ 95×1.06 → 6. günde onay) — gelecek sızmıyor");
+  ok(z.length === 3 && z[0].t === "L" && z[0].p === 100 && z[0].at === 2 && z[1].t === "H" && z[1].p === 112 && z[1].at === 4 && z[2].t === "L" && z[2].p === 95 && z[2].at === 6, "zigzag: yön ilk %6 harekette belirlenir (dip 100, 2. gün) · tepe 112 (4. gün onay) · dip 95 (101 ≥ 95×1.06 → 6. gün onay) — gelecek sızmıyor");
   // (zigzag ilk pivotu için başta %6+ düşüş) yükselen trend + ABC: H(130) → A(117) → B(124) → C(115) → B tepesi kırıldı
   const up = [70, 66, 62, ...Array.from({ length: 140 }, (_, i) => 60 + i * 0.5)], abc = [125, 128, 130, 124, 118, 115, 119, 122, 125, 121, 117, 114, 118, 121, 124, 126];
   const p = paCore([...up, ...abc].map(c => B(c, c, c)));
@@ -72,6 +72,12 @@ console.log("Formasyonlar (paCore: Elliott ABC / 3. dalga / uyarılar):");
   const dn = paCore([...up, ...abc].map(c => B(c, c, c)).map((b, i, a) => i > 140 ? b : { ...b, close: 200 - i * 0.5, high: 200 - i * 0.5, low: 200 - i * 0.5 }));
   ok(!dn.al.some(r => r.k === "ABC"), "aynı ABC düşen trendde → AL YOK");
   ok(paCore(up.slice(0, 100).map(c => B(c))).al.length === 0, "kısa seri (<130 gün) → boş");
+  // 5 dalga itki (%10): 60→80→70→110→95→120 sonra düşüş: 4. dalga dibi onayında 5. DALGA AL, 95 aşağı kırılınca İTKİ BİTTİ SAT
+  const pts = [70, 60, 80, 70, 110, 95, 120, 90], path = Array(80).fill(70); for (let i = 1; i < pts.length; i++) { const a0 = pts[i - 1], a1 = pts[i], n = Math.abs(a1 - a0); for (let k = 0; k < n; k++) path.push(a0 + (a1 - a0) * k / n); } path.push(90);
+  const bars = path.map(c => B(c, c, c)), hits = { W5: [], IMP: [] };
+  for (let i = 130; i < bars.length; i++) { const r = paCore(bars.slice(0, i + 1)); if (r.al.some(x => x.k === "W5")) hits.W5.push(path[i]); if (r.sat.some(x => x.k === "IMP")) hits.IMP.push(path[i]); }
+  ok(hits.W5.length === 1 && hits.W5[0] > 95 && hits.W5[0] < 110, "itki kuralları sağlanınca 4. dalga dibi onay gününde 5. DALGA AL (fiyat " + hits.W5[0] + ")");
+  ok(hits.IMP.length === 1 && hits.IMP[0] < 95, "5. dalga bitip 4. dalga dibi (95) kırılınca İTKİ BİTTİ → SAT, tek sefer (fiyat " + hits.IMP[0] + ")");
 }
 console.log(fail ? `\n❌ ${fail} BAŞARISIZ` : "\n✅ TÜM KARNE TESTLERİ GEÇTİ");
 process.exit(fail ? 1 : 0);

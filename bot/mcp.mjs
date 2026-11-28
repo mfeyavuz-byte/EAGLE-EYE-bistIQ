@@ -39,6 +39,10 @@ export function parseMcpText(t) {
   return out;
 }
 
+// Sunucu tek sonuçlu tabloyu dizi yerine NESNE döndürebiliyor (ör. supertrend 1 hisse) → her zaman dizi.
+export const mcpRows = (r, key = "stocks") => { const v = r?.[key] ?? r?.data; return Array.isArray(v) ? v : v && typeof v === "object" && v.symbol ? [v] : []; };
+// Analist özeti: tekli istekte nesne, TOPLU istekte JSON metni ("summary": "{...}") → nesne
+export const anSummary = x => { let s = x?.summary; if (typeof s === "string") { try { s = JSON.parse(s); } catch { s = null; } } return s && typeof s === "object" && s.consensus ? s : null; };
 // SAĞLIK: bu çalışmadaki MCP çağrılarının özeti (raporda "sunucu yanıt vermiyor" uyarısı için). 2026-11-28: sunucu 503 "no available server".
 export const mcpHealth = { calls: 0, fails: 0, last: "" };
 export async function mcpCall(name, args, timeout = 9000) {

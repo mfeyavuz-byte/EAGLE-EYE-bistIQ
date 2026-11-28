@@ -45,5 +45,13 @@ console.log("Yahoo son mum kapanışı null (bugünkü mum):");
   ok(d[1].close === 105, "kapanış doluysa dokunulmaz");
   globalThis.fetch = real;
 }
+console.log("Borsa MCP okuma (tek sonuçlu tablo, toplu analist özeti):");
+{
+  const { mcpRows, anSummary, parseMcpText } = await import("./mcp.mjs");
+  const one = parseMcpText("## metadata\nindex: XU100\n## stocks\nsymbol: ANSGR\nname: \nclose: 20.74\ntotal_count: 1");
+  const many = parseMcpText("## stocks\n```tsv\nsymbol\tname\tclose\nAKCNS\t\t169.5\nAKSA\t\t11.42\n```\ntotal_count: 2");
+  ok(mcpRows(one).length === 1 && mcpRows(one)[0].symbol === "ANSGR" && mcpRows(many).length === 2 && mcpRows(null).length === 0, "tek sonuç nesne → [nesne] · tablo → dizi · boş → []");
+  ok(anSummary({ summary: '{"buy": 30, "hold": 1, "mean_target": 436.57, "consensus": "Buy"}' })?.mean_target === 436.57 && anSummary({ summary: { consensus: "Hold" } })?.consensus === "Hold" && anSummary({ summary: "bozuk" }) === null, "analist özeti: metin JSON / nesne / bozuk → null");
+}
 console.log(fail ? `\n❌ ${fail} BAŞARISIZ` : "\n✅ TÜM VERİ TESTLERİ GEÇTİ");
 process.exit(fail ? 1 : 0);
