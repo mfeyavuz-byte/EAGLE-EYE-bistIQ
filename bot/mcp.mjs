@@ -39,7 +39,10 @@ export function parseMcpText(t) {
   return out;
 }
 
+// SAĞLIK: bu çalışmadaki MCP çağrılarının özeti (raporda "sunucu yanıt vermiyor" uyarısı için). 2026-11-28: sunucu 503 "no available server".
+export const mcpHealth = { calls: 0, fails: 0, last: "" };
 export async function mcpCall(name, args, timeout = 9000) {
+  mcpHealth.calls++;
   const ctrl = new AbortController(), tid = setTimeout(() => ctrl.abort(), timeout);
   try {
     const r = await fetch(MCP_URL, {
@@ -47,7 +50,7 @@ export async function mcpCall(name, args, timeout = 9000) {
       headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
     });
-    if (!r.ok) return null;
+    if (!r.ok) { mcpHealth.fails++; mcpHealth.last = "HTTP " + r.status; return null; }
     const txt = await r.text();
     // SSE: "data: {...}" satırını ayıkla
     const line = txt.split("\n").map(s => s.replace(/^data:\s*/, "").trim()).find(s => s.startsWith("{"));
@@ -57,6 +60,6 @@ export async function mcpCall(name, args, timeout = 9000) {
     const t = j?.result?.content?.[0]?.text;
     if (!t) return null;
     try { return JSON.parse(t); } catch { return parseMcpText(t); }
-  } catch { return null; }
+  } catch (e) { mcpHealth.fails++; mcpHealth.last = e?.name === "AbortError" ? "zaman aşımı" : "ağ hatası"; return null; }
   finally { clearTimeout(tid); }   // sayaç gövde okunana kadar açık (takılma = sonsuz bekleme olmasın)
 }

@@ -58,7 +58,7 @@ jobs:
           fi
           W=$(node bot/gate.mjs "$T0")
           echo "Tetik: $GITHUB_EVENT_NAME · İstanbul $(TZ=Europe/Istanbul date '+%a %H:%M') · kapı: $W"
-          if [ "$W" = "skip" ]; then echo "Seans dışı — çıkılıyor (mesaj yok)."; exit 0; fi
+          if [ "$W" = "skip" ]; then echo "Seans dışı — bekleyen Telegram komutu varsa cevaplanır, yoksa çıkılır."; EAGLE_MODE=cmd node bot/run.mjs; exit 0; fi
           case "$W" in ''|*[!0-9]*) echo "Kapı hatası: '$W'"; exit 1;; esac
           for F in trade.yml backtest.yml; do   # ikisi de zamanlanmış → ikisi de 60 gün kuralına tabi
             curl -s -o /dev/null -w "keepalive $F HTTP %{http_code}\n" -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$WF/$F/enable"

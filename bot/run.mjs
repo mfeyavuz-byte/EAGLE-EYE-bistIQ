@@ -7,7 +7,7 @@
 import { getSignals, enrichData, getHigherTrend } from "./engine.mjs";
 import { fetchDaily, fetchWeekly, fetchIndexClose, weekKey } from "./data.mjs";
 import { buildModels, modelMsg } from "./model-portfolio.mjs";
-import { mcpCall } from "./mcp.mjs";
+import { mcpCall, mcpHealth } from "./mcp.mjs";
 import { grokXSentiment, geminiAdvise, grokEnabled, geminiEnabled, llmDiag, grokLastError } from "./llm.mjs";
 import { positionScan } from "./position-scan.mjs";
 import { fetchNews } from "./news.mjs";
@@ -132,6 +132,7 @@ function buildScanMsg(signals, gErr = 0, newSet = null, full = false) {   // new
   if (!full && (AL.length > SHOW || SA.length > SHOW)) m += "\n\nTam liste: /tara";
   if (_staleNote) m += "\n\n" + _staleNote;
   if (_macroNote) m += "\n\n" + _macroNote;
+  if (mcpHealth.calls >= 2 && mcpHealth.fails === mcpHealth.calls) m += `\n\n⚠ Borsa MCP sunucusu yanıt vermiyor (${mcpHealth.last}) — bilanço yasağı, analist ve F/K filtreleri bu taramada devre dışı.`;
   if (gErr) m += `\n\n⛔ GIST ERİŞİLEMİYOR (HTTP ${gErr}) — ${[401, 403, 404].includes(gErr) ? "GH_GIST_TOKEN süresi dolmuş/geçersiz (veya GIST_ID yanlış): GitHub'da yeni token (gist yetkili) oluştur, repo Settings → Secrets → GH_GIST_TOKEN'ı güncelle." : "geçici olabilir."} Bu sürede AI TRADER işlem yapmaz, komutlar cevaplanmaz; portföy korunur.`;
   return m + "\n\n⚠ Yatırım tavsiyesi değildir · ~15dk gecikmeli olabilir.";
 }
@@ -1003,6 +1004,23 @@ async function runPortfolioMode() {
 async function main() {
   if (process.env.EAGLE_MODE === "portfolio") return runPortfolioMode();
   if (process.env.EAGLE_MODE === "summary") return runSummaryMode();
+  // KOMUT MODU (seans dışı saatlik tetik): bekleyen Telegram komutu yoksa hemen çık; varsa (gerekiyorsa tarayıp) cevapla.
+  // Eskiden komutlar yalnız seans içinde okunuyordu → hafta sonu/gece yazılan /tara Pazartesi'ye kadar cevapsız kalıyordu.
+  if (process.env.EAGLE_MODE === "cmd") {
+    const st = await gistGet(PAPER_FILE, null);
+    if (!st || st === READ_FAILED || !TG_TOKEN || !TG_CHAT) return console.log("Komut modu: gist/Telegram yok.");
+    let ups = [];
+    try { const r = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getUpdates?offset=${st.tgOffset || 0}&timeout=0`, { signal: AbortSignal.timeout(15000) }); ups = (await r.json()).result || []; } catch {}
+    const mine = ups.filter(u => String(u.message?.chat?.id) === String(TG_CHAT) && (u.message?.text || "").startsWith("/"));
+    if (!mine.length) { if (ups.length) { st.tgOffset = ups.at(-1).update_id + 1; await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } }); } return console.log("Komut modu: bekleyen komut yok."); }
+    let signals = [], bearRegime = false;
+    if (mine.some(u => /^\/(tara|hisse|takip|start)/i.test(u.message.text))) {   // canlı sinyal gerektirenler → tara
+      const sig = await scanAll(), idxRows = await fetchDaily("XU100").catch(() => []), mc = marketContext(sig, idxRows, idxRows.at(-1)?.close ?? null);
+      signals = mc.signals; bearRegime = mc.bearRegime;
+    }
+    await handleCommands(st, { signals, bearRegime });
+    return console.log(`Komut modu: ${mine.length} komut işlendi.`);
+  }
   const t0 = Date.now();
   console.log("Tarama başlıyor:", syms.length, "sembol");
   let signals = await scanAll();
