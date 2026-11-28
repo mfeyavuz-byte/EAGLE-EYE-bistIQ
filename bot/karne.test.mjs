@@ -84,17 +84,29 @@ console.log("Formasyonlar (paCore: Elliott ABC / 3. dalga / uyarılar):");
 }
 console.log("Otomatik susturma + en iyiler listesi:");
 {
-  const { muteCalc, setMuted, topPicks, kvList } = await import("./run.mjs"), td = new Date().toISOString().slice(0, 10);
+  const { muteCalc, setMuted, vadePicks, kvList, trendFlags } = await import("./run.mjs"), td = new Date().toISOString().slice(0, 10);
   const I = (k, why, R, n, src) => Array.from({ length: n }, () => ({ k, why, src, R, cd: td }));
   const m = muteCalc({ closed: [...I("KV", "güçlü kapanış", -0.2, 25), ...I("KV", "dönüş günü", 0.4, 25), ...I("EW", "x", -0.5, 10, "W3"), ...I("AL", "", -1, 40), ...I("MA20", "", -0.1, 20)] });
   ok(m["KV:güçlü kapanış"] && !m["KV:dönüş günü"] && !m["EW:W3"] && !m.AL && m.MA20, "≥20 sonuç + ort. R ≤ 0 → susturulur · kârlı / <20 sonuç / tarama AL'ı susturulmaz (" + Object.keys(m).join(", ") + ")");
-  const R = (sym, extra = {}) => ({ sym, c: 10, dr: 5, pos: 0.9, vr: 2, atr: 0.5, rec: 3, ...extra });
-  const k = { rev: true, xDay: 1, top: [R("AAA"), R("BBB")], strong: [R("CCC")], pull3: [], rsi2: [], weakSet: new Set(["DDD"]), weak: [{ sym: "DDD", c: 5, dr: -6 }], ma20: [], ew: [{ sym: "BBB", k: "W5", c: 10, stop: 9.5, tgt: 11 }], ews: [{ sym: "CCC", k: "IMP", c: 10, lv: 9.8 }], paw: [] };
-  setMuted({}); let T = topPicks(k, [], { gz: [] });
-  ok(T.al[0].sym === "AAA" || T.al[0].sym === "BBB", "en yüksek günlük ölçüm (dönüş günü 1.48/3g) ilk sırada");
-  ok(T.al.find(x => x.sym === "BBB")?.conf.includes("Elliott 5. dalga") && T.clash.includes("CCC") && !T.al.some(x => x.sym === "CCC") && T.sat[0].sym === "DDD", "aynı hissede ikinci kaynak = teyit · AL+SAT çakışan (CCC) listede yok · gün ≤−%4 SAT listesinde");
-  setMuted({ muted: { "KV:dönüş günü": { n: 20, r: -0.1 } } }); T = topPicks(k, [], { gz: [] });
-  ok(!T.al.some(x => x.key === "KV:dönüş günü") && kvList(k).every(r => r.why !== "dönüş günü") && kvList(k, true).some(r => r.why === "dönüş günü"), "susturulan kaynak listelerde yok ama karne kaydı için (all) gölgede üretiliyor");
+  const R = (sym, extra = {}) => ({ sym, c: 10, dr: 1, pos: 0.9, vr: 2, atr: 0.5, rec: 3, ...extra });
+  const k = { rev: true, xDay: 1, top: [R("AAA")], strong: [], pull3: [R("PPP")], rsi2: [], weakSet: new Set(["DDD"]), weak: [{ sym: "DDD", c: 5, dr: -6 }], ma20: [],
+    ew: [{ sym: "BBB", k: "W5", c: 10, stop: 9.5, tgt: 11 }], ews: [{ sym: "CCC", k: "IMP", c: 10, lv: 9.8 }], paw: [],
+    trend: [{ sym: "BBB", c: 10, atr: 0.5, s52: true }, { sym: "TTT", c: 20, atr: 1, tt: true }, { sym: "CCC", c: 10, atr: 0.5, s52: true }], mom: { top: [], bot: [] } };
+  setMuted({}); let V = vadePicks(k, [], { gz: [] });
+  ok(V["10g"].al[0].sym === "BBB" && V["10g"].al[0].conf.includes("52 hafta zirvesi kırılımı") && V["10g"].al[0].stop === 9.5, "2 hafta: en güçlü (5. dalga +%2.68) ilk · 52h zirve teyit · Elliott'un kendi seviyesi korunur");
+  ok(!V["3g"].al.some(x => x.sym === "PPP") && V["5g"].al.some(x => x.sym === "PPP"), "trendde 3g düşüş 3 günde ✓ değil → 2–3 gün listesinde YOK, haftalıkta VAR");
+  const tt = V["60g"].al.find(x => x.sym === "TTT"); ok(tt && tt.stop === 17 && tt.tgt === 27.5, "3 aylık seviye: stop 3×ATR (≤%15), hedef 2.5R (" + (tt && `${tt.stop}/${tt.tgt}`) + ")");
+  ok(V["20g"].clash.includes("CCC") && !V["20g"].al.some(x => x.sym === "CCC") && V["3g"].al.some(x => x.sym === "CCC"), "aylıkta 52h AL + itki bitti SAT çakışır → alınmaz · 3 günde itki bitti ✓ değil → AL kalır");
+  ok(V["3g"].sat[0].sym === "DDD" && !V["60g"].al.some(x => x.sym === "AAA"), "sert düşüş her vadede SAT · endeks dönüş günü (5 yılda ✓ değil) vade listelerinde yok");
+  setMuted({ muted: { S52: { n: 20, r: -0.1 } } }); V = vadePicks(k, [], { gz: [] });
+  ok(!Object.values(V).some(v => v.al.some(x => x.key === "S52")), "susturulan kaynak (S52) hiçbir vadede yok");
+  setMuted({ muted: { "KV:dönüş günü": { n: 20, r: -0.1 } } });
+  ok(kvList(k).every(r => r.why !== "dönüş günü") && kvList(k, true).some(r => r.why === "dönüş günü"), "susturulan KV kaynağı listede yok ama karne kaydı için (all) gölgede üretiliyor");
+  // trendFlags: 52 hafta zirvesi (bugün tepe 250 günün tepesini aştı) + trend şablonu
+  const B2 = c => ({ close: c, high: c * 1.01, low: c * 0.99 }), ser = Array.from({ length: 300 }, (_, i) => B2(50 + i * 0.2));
+  const f0 = trendFlags(ser), f1 = trendFlags([...ser, ...Array(10).fill(B2(105)), B2(112)]);
+  ok(!f0.s52 && f0.tt && f1.s52 && f1.tt && !f1.gold, "yükselen seri: dün de zirvedeyse kırılım sayılmaz (yalnız ilk gün) · 10 gün dinlenip zirveyi aşınca 52h kırılımı · trend şablonu");
+  const f2 = trendFlags([...ser, B2(80)]); ok(!f2.s52 && !f2.tt, "sert düşüş günü → zirve kırılımı yok, şablon bozuldu");
   setMuted({});
 }
 console.log(fail ? `\n❌ ${fail} BAŞARISIZ` : "\n✅ TÜM KARNE TESTLERİ GEÇTİ");

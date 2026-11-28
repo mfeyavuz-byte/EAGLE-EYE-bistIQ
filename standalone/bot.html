@@ -61,7 +61,11 @@ function tierTag(t){var s=/SAT/.test(t);return '<span class="tag '+(s?"t-sat":"t
 function lvl(e,t,s){return '<span class="lv">giriş <b>'+n(e)+'₺</b> · hedef <b>'+n(t)+'₺</b> · stop <b>'+n(s)+"₺</b></span>"}
 function list(rows,fn,show,id){if(!rows||!rows.length)return '<div class="empty">Şu an yok.</div>';var h=rows.slice(0,show).map(fn).join("");if(rows.length>show)h+='<div id="'+id+'" hidden>'+rows.slice(show).map(fn).join("")+'</div><button class="more" data-x="'+id+'">Tümünü göster ('+rows.length+")</button>";return h}
 function sec(id,title,sub,body){return '<section id="s-'+id+'"><h2>'+title+"</h2>"+(sub?'<div class="sub">'+sub+"</div>":"")+body+"</section>"}
-var SEC=[];
+var SEC=[],TABS=[["gun","⏱ Gün içi"],["3g","⚡ 2–3 gün"],["5g","📅 Haftalık"],["10g","📅 2 hafta"],["20g","🗓 Aylık"],["60g","📆 3 aylık"],["genel","🎯 Genel"],["all","Tümü"]];
+var TAB=(function(){try{return localStorage.getItem("bot_tab")||"3g"}catch(e){return "3g"}})();
+function showTab(t){if(!TABS.some(function(x){return x[0]===t}))t="3g";TAB=t;
+  [].forEach.call(document.querySelectorAll("#out .tabpane"),function(p){p.hidden=!(t==="all"||p.dataset.v.split(" ").indexOf(t)>=0)});
+  [].forEach.call(document.querySelectorAll("#nav button"),function(b){b.classList.toggle("on",b.dataset.tab===t)});}
 function render(d){
   var sc=d.scan||{},k=d.kisa,notes="";
   $("meta").textContent="Tarama: "+when(sc.t)+" · Gün sonu: "+(k&&k.day?k.day:"–")+" · Son güncelleme: "+when(d.ts);
@@ -73,11 +77,16 @@ function render(d){
   $("notes").innerHTML=notes;
   var row=function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+"</span><span>"+tierTag(r.tier)+lvl(r.e,r.t,r.s)+"</span></div>"};
   var out=[];SEC=[];
-  var add=function(id,lab,html){SEC.push([id,lab]);out.push(html)};
-  var T=d.top;
-  if(T){var tl=function(x,i){var cf=x.conf&&x.conf.length?' <span class="sub">+'+x.conf.length+" teyit ("+esc(x.conf.join(", "))+")</span>":"";
-      return '<div class="row"><span class="sym">'+(i+1)+". "+esc(x.sym)+'</span><span><span class="tag '+(x.sat?"t-sat":"t-al")+'">'+(x.sat?"SAT":"AL")+"</span>"+(x.sat?(x.c!=null?n(x.c)+"₺ · ":"")+esc(x.n)+" ("+esc(x.m)+")"+(x.lv?" · seviye <b>"+n(x.lv)+"₺</b>":"")+" → elde varsa çık":(x.lim?'<span class="lv">limit <b>'+n(x.c)+"₺</b> · hedef <b>"+n(x.tgt)+"₺</b> · stop <b>"+n(x.stop)+"₺</b></span>":lvl(x.c,x.tgt,x.stop))+" · "+esc(x.n)+" ("+esc(x.m)+")")+cf+"</span></div>"};
-    add("top","🏆 En iyiler",sec("top","🏆 BUGÜNÜN EN İYİLERİ","Tüm kaynaklar ölçülmüş günlük fazla getiriye göre sıralı · AL ve SAT kaynağı çakışan hisse alınmaz",((T.al||[]).length?T.al.map(tl).join(""):'<div class="empty">AL adayı yok.</div>')+((T.sat||[]).map(tl).join(""))+((T.clash||[]).length?'<div class="sub" style="margin-top:6px">⚖ Çakışan (alınmadı): '+esc(T.clash.slice(0,10).join(", "))+"</div>":"")));}
+  var TG={tara:"10g",kisa:"3g 5g",ma20:"gun 3g 5g 10g 20g",uzak:"3g 5g",ew:"5g 10g 20g 60g",uyari:"10g 20g 60g",wma:"20g 60g",mcp:"genel",takip:"genel",model:"20g 60g genel",trader:"genel",karne:"genel"};
+  var add=function(id,lab,html,tags){SEC.push([id,lab]);out.push('<div class="tabpane" data-v="'+(tags||TG[id]||"genel")+'">'+html+"</div>")};
+  var VD=d.vade,VL=[["3g","⚡ 2–3 GÜN",3],["5g","📅 HAFTALIK",5],["10g","📅 2 HAFTA",10],["20g","🗓 AYLIK",20],["60g","📆 3 AYLIK",60]];
+  add("gun","⏱ Gün içi",sec("gun","⏱ GÜN İÇİ","Saatlik 2 yıl ölçümünde gün içi kurallardan yalnız MA20 limit alım tuttu (aynı gün +%0.6). Açılış kırılımı, hacim patlaması, dünkü tepe kırılımı, boşluk tutunması tutmadı. Endeks ≤−%1 iken tek başına ≥+%1 yükselen hisse sonraki 3 günde −%1.0.",""),"gun");
+  if(VD){VL.forEach(function(v){var x=VD[v[0]]||{al:[],sat:[],clash:[]},h=v[2];
+    var tl=function(r,i){var cf=r.conf&&r.conf.length?' <span class="sub">+'+r.conf.length+" teyit ("+esc(r.conf.join(", "))+")</span>":"";
+      return '<div class="row"><span class="sym">'+(i+1)+". "+esc(r.sym)+'</span><span><span class="tag '+(r.sat?"t-sat":"t-al")+'">'+(r.sat?"SAT":"AL")+"</span>"+(r.sat?(r.c!=null?n(r.c)+"₺ · ":"")+esc(r.n)+" ("+esc(r.m)+"/"+h+"g)"+(r.lv?" · seviye <b>"+n(r.lv)+"₺</b>":"")+" → elde varsa çık, alma":(r.lim?'<span class="lv">limit <b>'+n(r.c)+"₺</b> · hedef <b>"+n(r.tgt)+"₺</b> · stop <b>"+n(r.stop)+"₺</b></span>":lvl(r.c,r.tgt,r.stop))+" · "+esc(r.n)+" ("+esc(r.m)+"/"+h+"g)")+cf+"</span></div>"};
+    var al=(x.al||[]).map(function(r){return Object.assign({},r,{sat:0})}),sa=(x.sat||[]).map(function(r){return Object.assign({},r,{sat:1})});
+    add("v"+v[0],v[1],sec("v"+v[0],"🏆 "+v[1]+" — EN İYİLER","Yalnız "+h+" günde 5 yılın 3 döneminde de tutarlı çıkan kurulumlar, o vadedeki ölçüme göre sıralı · kaynak başına ≤2 · AL+SAT çakışan alınmaz",
+      (al.length?al.map(tl).join(""):'<div class="empty">AL adayı yok.</div>')+(sa.length?'<h2 style="margin-top:12px">🔴 SAT / kaçın</h2>'+sa.map(tl).join(""):"")+((x.clash||[]).length?'<div class="sub" style="margin-top:6px">⚖ Çakışan (alınmadı): '+esc(x.clash.slice(0,10).join(", "))+"</div>":"")),v[0]);});}
   add("tara","AL / SAT",'<div class="cols"><div>'+sec("al","🟢 AL"+(sc.al?" · "+sc.al.length:""),"GÜÇLÜ AL ölçümü: 10 günde piyasaya göre +%1.6",list(sc.al,row,8,"xal"))+"</div><div>"+sec("sat","🔴 SAT"+(sc.sat?" · "+sc.sat.length:""),"GÜÇLÜ SAT = SAT + gün ≤−%4 (ölçüm −%0.9)",list(sc.sat,row,8,"xsat"))+"</div></div>");
   if(k){
     var kr=function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+'</span><span><span class="tag t-al">'+esc(r.why||"AL")+"</span>"+pc(r.dr)+" "+lvl(r.c,r.tgt,r.stop)+"</span></div>"};
@@ -110,11 +119,12 @@ function render(d){
     add("trader","AI TRADER",sec("trader","🤖 AI TRADER (kağıt)","Değer ≈ "+n(val)+"₺ "+pc(t.start?(val/t.start-1)*100:null)+" · nakit "+n(t.cash)+"₺",((t.pos&&t.pos.length)?t.pos.map(tr).join(""):'<div class="empty">Açık pozisyon yok.</div>')+(t.closed&&t.closed.length?'<h2 style="margin-top:12px">Son kapanan işlemler</h2>'+list(t.closed,function(x){return '<div class="row"><span class="sym">'+esc(x.sym)+'</span><span class="lv">'+esc(x.open||"")+" → "+esc(x.close||"")+" · "+n(x.entry)+"₺ → "+n(x.exit)+"₺ "+pc(x.pnlPct)+" · "+esc(x.reason||"")+(x.setup?" · "+esc(x.setup):"")+"</span></div>"},5,"xt"):"")));}
   if(d.karne)add("karne","Karne",sec("karne","📒 KARNE","Botun önerilerinin gerçekleşen sonucu",'<div class="pre">'+esc(d.karne)+"</div>"));
   $("out").innerHTML=out.join("");
-  $("nav").innerHTML=SEC.map(function(s){return '<button data-go="'+s[0]+'">'+esc(s[1])+"</button>"}).join("");
+  $("nav").innerHTML=TABS.map(function(t){return '<button data-tab="'+t[0]+'">'+esc(t[1])+"</button>"}).join("");
+  showTab(TAB);
 }
 document.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;
   if(b.dataset.x){var el=$(b.dataset.x);el.hidden=!el.hidden;b.textContent=el.hidden?"Tümünü göster":"Daha az göster"}
-  if(b.dataset.go){var i=SEC.findIndex(function(x){return x[0]===b.dataset.go});var el2=$("out").children[i];if(el2)el2.scrollIntoView({behavior:"smooth",block:"start"})}
+  if(b.dataset.tab){showTab(b.dataset.tab);try{localStorage.setItem("bot_tab",b.dataset.tab)}catch(_){}}
 });
 async function load(){
   $("meta").textContent="Yükleniyor…";

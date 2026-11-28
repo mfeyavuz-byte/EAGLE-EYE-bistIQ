@@ -787,6 +787,9 @@ async function ideaFor(sym, signals, bearRegime, st) {
     const out_ = { sym, c, chg, trig, mark, text: `${mark} ${sym} ${c}₺ (${chg == null ? "?" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"}) — ${head.split(" (")[0].replace(/^\S+ /, "")}${earnTag(en)}\n   Kısa vade: ${kv}\n   ${lvl}${trend === "düşüş" && !live ? " · ana trend düşüş" : ""}` };
     const wm = wma200Status(w); if (wm) out_.text += "\n   " + wm.t;
     const pa = paCore(d); for (const x of pa.al.filter(x => !isMuted("EW:" + x.k))) out_.text += `\n   📐 ${x.why} → AL (${x.k === "W3" || x.k === "TRI" ? "20g" : "10g"}) · giriş ${c}₺ · hedef ${x.tgt}₺ · stop ${x.stop}₺ (ölçüm ${x.m})`;
+    const tf = trendFlags(d);
+    if (tf.s52) out_.text += `\n   📈 52 hafta zirvesi kırıldı → AL (ölçüm 10g +%0.8 · 20g +%1.3 · 60g +%2.6; 5 yılda her vadede ✓)`;
+    if (tf.tt) out_.text += `\n   ✅ Trend şablonunda (fiyat>MA50>MA150>MA200, zirveye yakın) → tut/al (ölçüm 20g +%0.9 · 60g +%2.0)${tf.ttp ? " · bugün MA50'ye çekildi (60g +%1.35)" : ""}`;
     for (const x of pa.sat) out_.text += `\n   🔴 ${x.why} · seviye ${x.lv}₺ (ölçüm ${x.m})`;
     for (const x of pa.warn) out_.text += `\n   ⚠ ${x.t}`;
     if (isIdx) out_.text = out_.text.replace(/₺/g, "");
@@ -940,6 +943,21 @@ function paCore(a) {
   return out;
 }
 function rsiSeries(c) { const r = Array(c.length).fill(50); let g = 0, l = 0; for (let i = 1; i < c.length; i++) { const d = c[i] - c[i - 1]; if (i <= 14) { g += Math.max(d, 0) / 14; l += Math.max(-d, 0) / 14; } else { g = (g * 13 + Math.max(d, 0)) / 14; l = (l * 13 + Math.max(-d, 0)) / 14; } if (i >= 14) r[i] = l ? 100 - 100 / (1 + g / l) : 100; } return r; }
+// 📈 TREND / MOMENTUM KURULUMLARI (2026-11-28 vade ölçümü, 5 yıl / 3 dönem; hz.mjs ile birebir aynı tanım):
+//  52 HAFTA ZİRVESİ KIRILIMI: bugünkü tepe son 250 günün tepesini aştı (dün aşmamıştı) → 3g +%0.39 · 10g +%0.78 · 20g +%1.29 · 60g +%2.60 (her vadede ✓)
+//  TREND ŞABLONU (Minervini): fiyat > MA50 > MA150 > MA200, MA200 20 günde yükselen, 52h zirveye ≤%25, 52h dibin ≥%30 üstü → 10g +%0.51 · 60g +%2.00 ✓
+//  + şablonda MA50'ye geri çekilme 60g +%1.35 · altın kesişim 20g +%0.99 · RSI14 70'i yukarı kesti 60g +%1.52 · 60g momentum ilk %10 60g +%1.20 / son %10 −%3.35
+function trendFlags(a) {
+  const j = a.length - 1, o = { s52: false, tt: false, ttp: false, gold: false, r70: false, ret60: null }; if (j < 260) return o;
+  const c = a.map(b => b.close), sm = (n, e) => c.slice(e - n + 1, e + 1).reduce((p, v) => p + v, 0) / n, m50 = sm(50, j), m150 = sm(150, j), m200 = sm(200, j);
+  const hi250 = Math.max(...a.slice(j - 250, j).map(b => b.high)), lo250 = Math.min(...a.slice(j - 250, j).map(b => b.low)), rs = rsiSeries(c);
+  o.s52 = a[j].high > hi250 && a[j - 1].high <= Math.max(...a.slice(j - 251, j - 1).map(b => b.high));
+  o.tt = c[j] > m50 && m50 > m150 && m150 > m200 && m200 > sm(200, j - 20) && c[j] >= hi250 * 0.75 && c[j] >= lo250 * 1.3;
+  o.ttp = o.tt && a[j].low <= m50 * 1.02 && c[j] > m50;
+  o.gold = m50 > m200 && sm(50, j - 1) <= sm(200, j - 1);
+  o.r70 = rs[j] > 70 && rs[j - 1] <= 70; o.ret60 = (c[j] / c[j - 60] - 1) * 100;
+  return o;
+}
 // Saf çekirdek (canlı shortTerm + portföy simülatörü AYNI kod): data = { SYM: günlük mumlar (son mum = değerlendirilen gün) }, x = XU100 günlük
 function shortCore(data, x) {
   if (!x || x.length < 2) return null;
@@ -956,13 +974,15 @@ function shortCore(data, x) {
       // MA20 LİMİT (2026-11-28 ölçümü): yükselen trend (MA50>MA200, kapanış > MA20 > MA50) → ertesi gün MA20'ye gün içi dokunursa limit alım:
       // aynı gün piyasaya +%0.58 (eğitim +0.57 / test +0.60), 3g +%0.45, 5g +%0.41. Kapanıştan alımda avantaj YOK (+%0.03) → kazanç limit fiyattan.
       if (up && cs[j] > m20 && cs[j] / m20 - 1 <= 0.04) m20l = +m20.toFixed(2); }
-    const pa = paCore(a);
-    rows.push({ sym: s, pa, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100, atr: tr / 14, avgVol: v20, tr3, m20l });
+    const pa = paCore(a), tf = trendFlags(a);
+    rows.push({ sym: s, pa, tf, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100, atr: tr / 14, avgVol: v20, tr3, m20l });
   }
   return { day: istDayOf(xt.ts), rev: xt.low <= xp * 0.99 && xt.close > xp, xDay: (xt.close / xp - 1) * 100, xLow: (xt.low / xp - 1) * 100,
     top: [...rows].sort((p, q) => q.rec - p.rec).slice(0, 10), strong: rows.filter(r => r.dr >= 4 && r.pos >= 0.8 && r.vr >= 1.5).sort((p, q) => q.dr - p.dr).slice(0, 10),
     pull3: rows.filter(r => r.tr3 && r.dr > -4).sort((p, q) => p.dr - q.dr).slice(0, 10),
     ma20: rows.filter(r => r.m20l && r.dr > -4).map(r => ({ sym: r.sym, c: r.c, lim: r.m20l, dist: (r.c / r.m20l - 1) * 100, stop: +(r.m20l - Math.min(r.atr, r.m20l * 0.05)).toFixed(2), tgt: +(r.m20l + Math.min(1.5 * r.atr, r.m20l * 0.075)).toFixed(2) })).sort((p, q) => p.dist - q.dist).slice(0, 8),
+    trend: rows.filter(r => r.tf.s52 || r.tf.tt || r.tf.gold || r.tf.r70).map(r => ({ sym: r.sym, c: r.c, dr: r.dr, atr: r.atr, ...r.tf })),
+    mom: (() => { const q = rows.filter(r => r.tf.ret60 != null).sort((p, q) => q.tf.ret60 - p.tf.ret60), k10 = Math.floor(q.length / 10); return q.length >= 50 ? { top: q.slice(0, k10).map(r => ({ sym: r.sym, c: r.c, atr: r.atr, ret60: r.tf.ret60 })), bot: q.slice(-k10).map(r => ({ sym: r.sym, c: r.c, ret60: r.tf.ret60 })) } : { top: [], bot: [] }; })(),
     ew: rows.flatMap(r => r.pa.al.map(x => ({ sym: r.sym, c: r.c, dr: r.dr, atr: r.atr, ...x }))).sort((p, q) => ({ W5: 0, ABC: 1, TRI: 2, W3: 3 }[p.k] ?? 4) - ({ W5: 0, ABC: 1, TRI: 2, W3: 3 }[q.k] ?? 4) || q.dr - p.dr),
     paw: rows.flatMap(r => r.pa.warn.map(x => ({ sym: r.sym, c: r.c, dr: r.dr, ...x }))), ews: rows.flatMap(r => r.pa.sat.map(x => ({ sym: r.sym, c: r.c, dr: r.dr, ...x }))),
     weak: rows.filter(r => r.dr <= -4).sort((p, q) => p.dr - q.dr).slice(0, 10), weakSet: new Set(rows.filter(r => r.dr <= -4).map(r => r.sym)), ...rsi2Core(data, x) };
@@ -1081,40 +1101,70 @@ async function modelStatus(st) {
   return `💼 MODEL PORTFÖY — ${st.mp.date} tarihinden beri (stop yiyen 🛑 stop fiyatından)\n${fmtTime()}\n\n🗓 AYLIK: ${pct(p.m.since)} (bugün ${pct(p.m.day)})\n` + p.m.rows.join("\n")
     + `\n\n📆 3 AYLIK: ${pct(p.q.since)} (bugün ${pct(p.q.day)})\n` + p.q.rows.join("\n") + `\n\n🏛 XU100 aynı dönem ${pct(p.xSince)} · bugün ${pct(p.xDay)}\n⚠ Yatırım tavsiyesi değildir.`;
 }
-// 🏆 BUGÜNÜN EN İYİLERİ (kullanıcı isteği 2026-11-28: tek sıralı liste). Tüm kaynaklar ÖLÇÜLMÜŞ GÜNLÜK fazla getiriye göre sıralanır
-// (ölçülen fazla getiri ÷ ufuk günü; piyasaya göre). Susturulan kaynak girmez. Aynı hissede AL ve SAT kaynağı çakışırsa hisse listeye girmez.
-// Hisse birden çok kaynakta varsa en güçlü kaynağı esas alınır, diğerleri "+N teyit" yazılır (teyit sayısı ayrıca ölçülmedi → sıralamayı değiştirmez).
-// Kaynak başına en çok 2 hisse (MA20 limit gibi 1 günlük ufuklu kaynak günlük puanda öne geçip listeyi doldurmasın).
-const TOP_SRC = {
-  "KV:dönüş günü": { e: 1.48, h: 3, n: "endeks dönüş günü toparlanan" }, MA20: { e: 0.61, h: 1, n: "MA20 limit (yarın, değerse)" },
-  "EW:W5": { e: 2.43, h: 10, n: "Elliott 5. dalga" }, GUCLUAL: { e: 1.60, h: 10, n: "GÜÇLÜ AL (tarama)" }, "EW:ABC": { e: 1.26, h: 10, n: "Elliott zigzag ABC" },
-  "KV:güçlü kapanış": { e: 0.39, h: 3, n: "güçlü kapanış" }, WMA_AL: { e: 3.0, h: 40, n: "200 HMA geri çekilme/teyit" }, "KV:trendde 3g düşüş": { e: 0.22, h: 3, n: "trendde 3g düşüş" },
-  "EW:W3": { e: 1.03, h: 20, n: "Elliott 3. dalga" }, "EW:TRI": { e: 0.41, h: 10, n: "Elliott üçgen" },
-  UZAK: { e: 1.25, h: 3, n: "gün ≤−%4 (uzak dur)", sat: 1 }, "EW:IMP": { e: 3.42, h: 20, n: "Elliott itki bitti", sat: 1 }, TUZAK: { e: 1.61, h: 10, n: "hacimli düşen trend tuzağı", sat: 1 },
-  "EW:TRI-": { e: 2.06, h: 20, n: "Elliott üçgen aşağı", sat: 1 }, GUCLUSAT: { e: 0.88, h: 10, n: "GÜÇLÜ SAT (tarama)", sat: 1 }, WMA_SAT: { e: 2.4, h: 40, n: "200 HMA aşağı kırılım", sat: 1 },
+// 🏆 VADEYE GÖRE EN İYİLER (kullanıcı isteği 2026-11-28). Her vadede YALNIZ o vadede ✓ çıkan kurulumlar (5 yıl / 3 dönemde aynı yön),
+// o vadedeki ölçülmüş fazla getiriye (%) göre sıralanır. Kaynak başına en çok 2 hisse; aynı vadede AL ve SAT kaynağı çakışan hisse alınmaz;
+// ek kaynaklar "+N teyit" (teyit sayısı ayrıca ölçülmedi → sıralamayı değiştirmez). Susturulan kaynak girmez.
+// Ölçümler: günlük 5y (hz.mjs) · 200 HMA haftalık 5y (wk.mjs: 1h≈5g, 2h≈10g, 4h≈20g, 12h≈60g) · GÜÇLÜ AL/SAT taraması 2y (eğitim/test).
+// Dışarıda kalanlar (5 yılda ✓ değil): güçlü kapanış, endeks dönüş günü (yalnız 2025+), RSI2, zigzag ABC, üçgen yukarı, 200 HMA 2. hafta teyidi.
+const VADE = [["3g", "⚡ 2–3 GÜN", 3], ["5g", "📅 HAFTALIK", 5], ["10g", "📅 2 HAFTA", 10], ["20g", "🗓 AYLIK", 20], ["60g", "📆 3 AYLIK", 60]];
+const VSRC = {   // e: { ufuk(gün): ölçülen fazla getiri % } — yalnız ✓ ufuklar
+  "EW:W5": { n: "Elliott 5. dalga", e: { 3: 0.84, 5: 1.16, 10: 2.68, 20: 1.81, 60: 3.26 } },
+  S52: { n: "52 hafta zirvesi kırılımı", e: { 3: 0.39, 5: 0.44, 10: 0.78, 20: 1.29, 60: 2.60 } },
+  "EW:W3": { n: "Elliott 3. dalga", e: { 3: 0.33, 5: 0.41, 10: 0.55, 20: 1.14, 60: 2.39 } },
+  MA20: { n: "MA20 limit (yarın, değerse)", e: { 3: 0.23, 5: 0.28, 10: 0.40, 20: 0.50 } },
+  TT: { n: "trend şablonu", e: { 3: 0.16, 5: 0.25, 10: 0.51, 20: 0.90, 60: 2.00 } },
+  TREND3: { n: "trendde 3g düşüş", e: { 5: 0.29, 10: 0.48, 20: 0.48 } },
+  GUCLUAL: { n: "GÜÇLÜ AL (tarama, 2y)", e: { 10: 1.60 } },
+  GOLD: { n: "altın kesişim", e: { 20: 0.99 } },
+  WMA_AL: { n: "200 HMA geri çekilme", e: { 20: 1.93, 60: 7.21 } },
+  R70: { n: "RSI14 70'i yukarı kesti", e: { 60: 1.52 } }, TTP: { n: "trend şablonunda MA50'ye çekilme", e: { 60: 1.35 } }, MOMP: { n: "60g momentum ilk %10", e: { 60: 1.20 } },
+  UZAK: { sat: 1, n: "sert düşüş günü (≤−%4)", e: { 3: 0.81, 5: 1.03, 10: 1.10, 20: 1.27, 60: 1.57 } },
+  "EW:IMP": { sat: 1, n: "Elliott itki bitti", e: { 20: 2.92, 60: 5.48 } }, "EW:TRI-": { sat: 1, n: "Elliott üçgen aşağı", e: { 5: 0.70 } },
+  TUZAK: { sat: 1, n: "hacimli düşen trend tuzağı", e: { 10: 1.51, 20: 1.72, 60: 5.01 } }, W2: { sat: 1, n: "ikili dip tuzağı", e: { 5: 0.53, 10: 1.25, 20: 1.90, 60: 2.99 } },
+  DIPW: { sat: 1, n: "dipten dönüş görünümü", e: { 60: 3.06 } }, MOMN: { sat: 1, n: "60g momentum son %10", e: { 60: 3.35 } },
+  WMA_SAT: { sat: 1, n: "200 HMA aşağı kırılım", e: { 5: 1.06, 10: 1.62, 20: 2.23 } }, WMA_KIR: { sat: 1, n: "200 HMA ilk kırılım haftası (kovalama)", e: { 5: 2.01, 10: 3.09, 20: 3.55, 60: 4.57 } },
+  GUCLUSAT: { sat: 1, n: "GÜÇLÜ SAT (tarama, 2y)", e: { 10: 0.88 } },
 };
-function topPicks(k, wl, ls, nAl = 5, nSat = 3) {
-  const C = [], add = (key, sym, lv = {}) => { const d = TOP_SRC[key]; if (d && !isMuted(key)) C.push({ key, sym, sat: !!d.sat, sc: d.e / d.h, h: d.h, n: d.n, m: `${d.sat ? "−" : "+"}%${d.e} / ${d.h}g`, ...lv }); };
-  if (k) { for (const r of kvList(k)) add("KV:" + r.why, r.sym, { c: r.c, stop: r.stop, tgt: r.tgt });
-    for (const r of k.ma20 || []) add("MA20", r.sym, { c: r.lim, stop: r.stop, tgt: r.tgt, lim: 1 });
-    for (const r of k.ew || []) add("EW:" + r.k, r.sym, { c: r.c, stop: r.stop, tgt: r.tgt });
+// Satır tabanlı kurulumlarda vadeye göre seviye: stop = m×ATR (tavanlı), hedef = R katı (3–5g 1.5R · 10–20g 2R · 60g 2.5R)
+const vLev = (h, c, atr) => { const m = { 3: 1, 5: 1.5, 10: 2, 20: 2.5, 60: 3 }[h], cap = { 3: 0.05, 5: 0.06, 10: 0.08, 20: 0.10, 60: 0.15 }[h], R = h <= 5 ? 1.5 : h <= 20 ? 2 : 2.5;
+  const sd = Math.min((atr > 0 ? atr : c * 0.03) * m, c * cap); return { stop: +(c - sd).toFixed(2), tgt: +(c + R * sd).toFixed(2) }; };
+function vadePicks(k, wl, ls, nAl = 10, nSat = 6) {
+  const C = [], add = (key, sym, lv) => { if (VSRC[key] && !isMuted(key)) C.push({ key, sym, ...lv }); }, row = (key, r) => add(key, r.sym, { c: r.c, atr: r.atr });
+  if (k) { for (const r of k.ma20 || []) add("MA20", r.sym, { c: r.lim, stop: r.stop, tgt: r.tgt, lim: 1, fix: 1 });
+    for (const r of k.ew || []) add("EW:" + r.k, r.sym, { c: r.c, stop: r.stop, tgt: r.tgt, fix: 1 });
     for (const r of k.ews || []) add("EW:" + r.k, r.sym, { c: r.c, lv: r.lv });
+    for (const r of k.pull3 || []) row("TREND3", r);
+    for (const r of k.trend || []) { if (r.s52) row("S52", r); if (r.tt) row("TT", r); if (r.ttp) row("TTP", r); if (r.gold) row("GOLD", r); if (r.r70) row("R70", r); }
+    for (const r of k.mom?.top || []) row("MOMP", r); for (const r of k.mom?.bot || []) add("MOMN", r.sym, { c: r.c });
     for (const r of k.weak || []) add("UZAK", r.sym, { c: r.c });
-    for (const r of k.paw || []) if (r.k === "DTK!") add("TUZAK", r.sym, { c: r.c }); }
-  for (const r of ls?.gz || []) add(r.tier === "GÜÇLÜ AL" ? "GUCLUAL" : "GUCLUSAT", r.sym, r.tier === "GÜÇLÜ AL" ? { c: r.e, stop: r.s, tgt: r.t } : { c: r.e });
+    for (const r of k.paw || []) { if (r.k === "DTK!") add("TUZAK", r.sym, { c: r.c }); if (r.k === "W") add("W2", r.sym, { c: r.c }); if (r.k === "DIP") add("DIPW", r.sym, { c: r.c }); } }
+  for (const r of ls?.gz || []) r.tier === "GÜÇLÜ AL" ? add("GUCLUAL", r.sym, { c: r.e, stop: r.s, tgt: r.t, fix: 1 }) : add("GUCLUSAT", r.sym, { c: r.e });
   for (const r of wl || []) { const c = +(r.lv * (1 + r.d / 100)).toFixed(2), sp = +(r.lv * 0.99).toFixed(2);
-    if (r.k === "AL") add("WMA_AL", r.sym, { c, stop: sp, tgt: +(c + 2 * Math.max(c - sp, c * 0.02)).toFixed(2) }); else if (r.k === "SAT") add("WMA_SAT", r.sym, { c, lv: r.lv }); }
-  const by = {}; for (const x of C) (by[x.sym] = by[x.sym] || []).push(x);
-  const pick = sat => Object.values(by).filter(a => a.every(x => x.sat === sat)).map(a => { const b = [...a].sort((p, q) => q.sc - p.sc); return { ...b[0], conf: [...new Set(b.slice(1).map(x => x.n))] }; }).sort((p, q) => q.sc - p.sc || q.conf.length - p.conf.length);
-  const cap = (arr, n) => { const c = {}, o = []; for (const x of arr) { if ((c[x.key] = (c[x.key] || 0) + 1) > 2) continue; o.push(x); if (o.length >= n) break; } return o; };   // kaynak başına en çok 2 → liste tek kaynağa boğulmaz
-  return { al: cap(pick(false), nAl), sat: cap(pick(true), nSat), clash: Object.entries(by).filter(([, a]) => a.some(x => x.sat) && a.some(x => !x.sat)).map(([s]) => s) };
+    if (r.k === "AL" && /GERİ/.test(r.t)) add("WMA_AL", r.sym, { c, stop: sp, tgt: +(c + 2 * Math.max(c - sp, c * 0.02)).toFixed(2), fix: 1 });
+    else if (r.k === "SAT") add("WMA_SAT", r.sym, { c, lv: r.lv }); else if (r.k === "KIRILIM") add("WMA_KIR", r.sym, { c, lv: r.lv }); }
+  const out = {};
+  for (const [id, , h] of VADE) {
+    const by = {}; for (const x of C) { const e = VSRC[x.key].e[h]; if (e == null) continue; (by[x.sym] = by[x.sym] || []).push({ ...x, sat: !!VSRC[x.key].sat, sc: e, n: VSRC[x.key].n }); }
+    // hisse başına kaynaklar güçlüden zayıfa; kotası (kaynak başına 2) dolan kaynak yerine hissenin SIRADAKİ kaynağı denenir
+    const pick = (sat, n) => { const used = {}, o = [];
+      const cand = Object.values(by).filter(a => a.every(x => x.sat === sat)).map(a => [...a].sort((p, q) => q.sc - p.sc)).sort((p, q) => q[0].sc - p[0].sc || q.length - p.length);
+      for (let round = 0; round < 6 && o.length < n; round++) for (const b of cand) { if (o.length >= n || o.some(x => x.sym === b[0].sym)) continue;
+        const t = b.find(x => (used[x.key] || 0) < 2); if (!t) continue; if (round === 0 && t !== b[0]) continue;   // 1. tur: yalnız en güçlü kaynağıyla
+        used[t.key] = (used[t.key] || 0) + 1; const lv = !sat && !t.fix ? vLev(h, t.c, t.atr) : {};
+        o.push({ key: t.key, sym: t.sym, c: t.c, stop: t.stop, tgt: t.tgt, lv: t.lv, lim: t.lim, ...lv, n: t.n, sc: t.sc, m: `${sat ? "−" : "+"}%${t.sc}`, conf: [...new Set(b.filter(x => x !== t).map(x => x.n))] }); }
+      for (const b of cand) { if (o.length >= n) break; if (o.some(x => x.sym === b[0].sym)) continue; const t = b[0], lv = !sat && !t.fix ? vLev(h, t.c, t.atr) : {};   // başka kaynak yoksa kota esner
+        o.push({ key: t.key, sym: t.sym, c: t.c, stop: t.stop, tgt: t.tgt, lv: t.lv, lim: t.lim, ...lv, n: t.n, sc: t.sc, m: `${sat ? "−" : "+"}%${t.sc}`, conf: [...new Set(b.slice(1).map(x => x.n))] }); }
+      return o.sort((p, q) => q.sc - p.sc || q.conf.length - p.conf.length); };
+    out[id] = { al: pick(false, nAl), sat: pick(true, nSat), clash: Object.entries(by).filter(([, a]) => a.some(x => x.sat) && a.some(x => !x.sat)).map(([s]) => s) };
+  }
+  return out;
 }
-function topMsg(T) {
-  const L = x => x.conf.length ? ` · +${x.conf.length} teyit (${x.conf.join(", ")})` : "";
-  let m = "🏆 BUGÜNÜN EN İYİLERİ (tüm kaynaklar, ölçülmüş günlük getiriye göre sıralı)";
-  m += T.al.length ? "\n" + T.al.map((x, i) => `${i + 1}. 🟢 ${x.sym} · ${x.lim ? "limit " : "giriş "}${x.c}₺ · hedef ${x.tgt}₺ · stop ${x.stop}₺ · ${x.n} (${x.m})${L(x)}`).join("\n") : "\nAL: bugün ölçülmüş kaynakta aday yok.";
-  if (T.sat.length) m += "\n" + T.sat.map((x, i) => `${i + 1}. 🔴 ${x.sym} · ${x.c != null ? x.c + "₺ · " : ""}${x.n} (${x.m})${x.lv ? ` · seviye ${x.lv}₺` : ""} → elde varsa çık, alma${L(x)}`).join("\n");
-  if (T.clash.length) m += `\n⚖ AL ve SAT kaynağı çakışan (listeye alınmadı): ${T.clash.slice(0, 10).join(", ")}`;
+function vadeMsg(V, ids = ["3g", "10g", "20g", "60g"], nAl = 3, nSat = 2) {
+  const L = x => x.conf.length ? ` · +${x.conf.length} teyit` : "";
+  let m = "🏆 VADEYE GÖRE EN İYİLER (her vadede yalnız o vadede 5 yılda tutarlı çıkan kurulumlar, ölçüme göre sıralı)\n⏱ Gün içi: yalnız MA20 limit ölçümde tuttu → aşağıdaki 📌 listesi";
+  for (const [id, lab, h] of VADE) { if (!ids.includes(id)) continue; const v = V[id] || { al: [], sat: [] };
+    m += `\n\n${lab} (${h} gün):` + (v.al.length ? "\n" + v.al.slice(0, nAl).map((x, i) => `${i + 1}. 🟢 ${x.sym} · ${x.lim ? "limit " : "giriş "}${x.c}₺ · hedef ${x.tgt}₺ · stop ${x.stop}₺ · ${x.n} (${x.m}/${h}g)${L(x)}`).join("\n") : "\nAL adayı yok.");
+    if (v.sat.length) m += "\n" + v.sat.slice(0, nSat).map(x => `🔴 ${x.sym} · ${x.n} (${x.m}/${h}g) → elde varsa çık, alma${L(x)}`).join("\n"); }
   return m;
 }
 // GÜN SONU ÖZETİ (seans bitince ~18:20; Yahoo BIST verisi ~15 dk gecikmeli → kapanış fiyatı oturmuş olsun)
@@ -1146,7 +1196,7 @@ async function daySummary(st) {
     if (G.KIRILIM.length) m += `\n🔔 YUKARI KIRILIM (takibe al; alım geri çekilmede): ${G.KIRILIM.map(r => `${r.sym} ${r.lv}₺${r.d >= 5 ? " (kovalama)" : ""}`).join(", ")}`;
     if (G.IZLE.length) m += `\n🟡 Bantta (SAT değil, −%1 altı kapanış SAT): ${G.IZLE.map(r => `${r.sym} ${r.lv}₺`).join(", ")}`;
   } catch (e) { console.error("200 HMA:", e.message); }
-  try { const T = topPicks(await shortTermC(), _site.wma || [], st.lastScan); _site.top = T; const head = m.indexOf("\n\n"); m = m.slice(0, head) + "\n\n" + topMsg(T) + m.slice(head); } catch (e) { console.error("En iyiler:", e.message); }
+  try { const V = vadePicks(await shortTermC(), _site.wma || [], st.lastScan); _site.vade = V; const head = m.indexOf("\n\n"); m = m.slice(0, head) + "\n\n" + vadeMsg(V) + m.slice(head); } catch (e) { console.error("Vade listeleri:", e.message); }
   return m + "\n\n⚠ Yatırım tavsiyesi değildir.";
 }
 async function runSummaryMode() {
@@ -1166,13 +1216,14 @@ async function runSummaryMode() {
     const k = await shortTermC();
     if (k) await ideasAdd(kvList(k, true).map(r => ({ k: "KV", sym: r.sym, d: k.day, e: r.c, s: r.stop, t: r.tgt, h: 3, why: r.why })));
     if (k) await ideasAdd((k.ew || []).map(r => ({ k: "EW", src: r.k, sym: r.sym, d: k.day, e: r.c, s: r.stop, t: r.tgt, h: r.k === "W3" || r.k === "TRI" ? 20 : 10, why: r.why })));
+    if (k) await ideasAdd((k.trend || []).filter(r => r.s52).map(r => { const l = vLev(20, r.c, r.atr); return { k: "S52", sym: r.sym, d: k.day, e: r.c, s: l.stop, t: l.tgt, h: 20 }; }));
     if (k?.ma20) st.ma20 = { made: k.day, items: k.ma20, hit: [] };   // ertesi işlem günü seansta izlenir
   } catch (e) { console.error("Fikir karnesi:", e.message); }
   const ok = await sendTG(await daySummary(st) + (karne ? "\n\n" + karne : ""));
   try { const R = await mcpReco(st); _site.mcp = { ok: R.ok, err: R.err, sc: R.sc, an: Object.fromEntries(Object.entries(R.an).map(([s, a]) => [s, { c: anTr(a.consensus), b: (a.strong_buy || 0) + (a.buy || 0), h: a.hold || 0, s: (a.sell || 0) + (a.strong_sell || 0), mt: a.mean_target, px: R.px[s] }])) }; await sendTG(mcpRecoMsg(R)); } catch (e) { console.error("MCP önerileri:", e.message); }
   // site verisi: kısa vade, MA20 limit, 200 HMA, karne, model portföy (gün sonu)
   try { const k = await shortTermC(); await siteSave({ kisa: k ? { day: k.day, rev: k.rev, xDay: k.xDay, upMkt: k.upMkt, al: kvList(k), ma20: isMuted("MA20") ? [] : k.ma20 || [], weak: k.weak.map(r => ({ sym: r.sym, dr: r.dr })), ew: (k.ew || []).filter(r => !isMuted("EW:" + r.k)).slice(0, 12).map(r => ({ sym: r.sym, c: r.c, why: r.why, m: r.m, stop: r.stop, tgt: r.tgt })), paw: (k.paw || []).map(r => ({ sym: r.sym, k: r.k, t: r.t })), ews: (k.ews || []).map(r => ({ sym: r.sym, why: r.why, m: r.m, lv: r.lv })) } : null,
-      wma: _site.wma || [], top: _site.top || null, muted: st.muted || {}, mcp: _site.mcp || null, karne: karne || "", model: st.mp || null, mpHist: st.mpHist || [], mpPerf: await mpPerf(st).then(p => p && { m: { since: p.m.since, day: p.m.day }, q: { since: p.q.since, day: p.q.day }, xSince: p.xSince }).catch(() => null) }); } catch (e) { console.error("Site verisi:", e.message); }
+      wma: _site.wma || [], vade: _site.vade || null, muted: st.muted || {}, mcp: _site.mcp || null, karne: karne || "", model: st.mp || null, mpHist: st.mpHist || [], mpPerf: await mpPerf(st).then(p => p && { m: { since: p.m.since, day: p.m.day }, q: { since: p.q.since, day: p.q.day }, xSince: p.xSince }).catch(() => null) }); } catch (e) { console.error("Site verisi:", e.message); }
   // HAFTALIK KARNE (Cuma): haftanın fikir karnesi + AI TRADER / model portföy / XU100 haftası — tek mesaj
   if (ok && new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", weekday: "short" }).format(new Date()) === "Fri") {
     try {
@@ -1211,7 +1262,7 @@ async function ideasEval() {
   await gistPut({ [IDEAS]: { content: JSON.stringify(b) } });
   return b;
 }
-const KN = { AL: "🔔 Yeni AL", TETIK: "🎯 Takip tetiği", KV: "⚡ Kısa vade AL", MA20: "📌 MA20 limit", DONUS: "🔄 Dönüş günü", GUCLU: "🚀 Güçlü kapanış", RSI2: "🔄 RSI2 dönüşü", EW: "📐 Elliott" };
+const KN = { AL: "🔔 Yeni AL", TETIK: "🎯 Takip tetiği", KV: "⚡ Kısa vade AL", MA20: "📌 MA20 limit", DONUS: "🔄 Dönüş günü", GUCLU: "🚀 Güçlü kapanış", RSI2: "🔄 RSI2 dönüşü", EW: "📐 Elliott", S52: "📈 52 hafta zirvesi" };
 function karneText(b, days) {
   const lim = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10), c = b.closed.filter(x => x.cd >= lim);
   if (!c.length) return `📒 KARNE (${days} gün): henüz sonuçlanan fikir yok · açık ${b.open.length}`;
@@ -1536,5 +1587,5 @@ if (import.meta.url === _entry) {
 export const _setWatchCache = v => { _wCache = v; };   // yalnız test
 export { shortCore };
 export { ideasAdd, ideasEval, ideasLoad, karneText, tuneMinConf, macroToday };
-export { candlePatterns, tierOf, rsi2Core, kvList, wma200Status, wmaScan, paCore, zigzag, mcpReco, mcpRecoMsg, mcpStock, topPicks, topMsg, muteCalc, setMuted };
+export { candlePatterns, tierOf, rsi2Core, kvList, wma200Status, wmaScan, paCore, zigzag, mcpReco, mcpRecoMsg, mcpStock, vadePicks, vadeMsg, trendFlags, muteCalc, setMuted };
 export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, ideaFor, daySummary, modelStatus, HELP, shortTerm, shortTermMsg, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };
