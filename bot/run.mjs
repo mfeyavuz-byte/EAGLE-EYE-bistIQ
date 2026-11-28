@@ -828,13 +828,17 @@ function shortCore(data, x) {
     const t = a[j], pc = a[j - 1].close, v20 = a.slice(j - 20, j).reduce((p, b) => p + (b.volume || 0), 0) / 20; if (!pc || v20 * t.close < 5e6) continue;
     let tr = 0; for (let k = j - 13; k <= j; k++) tr += Math.max(a[k].high - a[k].low, Math.abs(a[k].high - a[k - 1].close), Math.abs(a[k].low - a[k - 1].close));
     // TRENDDE 3 GÜN DÜŞÜŞ (2026-11-28 ölçümü, günlük 2 yıl): MA50>MA200, fiyat MA50 üstü, 3 kapanış üst üste düşüş → 3g piyasaya +%0.26 (eğitim +0.24 / test +0.29)
-    let tr3 = false; if (j >= 200) { const cs = a.map(b => b.close), sm = n => cs.slice(j - n + 1, j + 1).reduce((p, v) => p + v, 0) / n, m50 = sm(50), m200 = sm(200);
-      tr3 = m50 > m200 && cs[j] > m50 && cs[j] < cs[j - 1] && cs[j - 1] < cs[j - 2] && cs[j - 2] < cs[j - 3]; }
-    rows.push({ sym: s, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100, atr: tr / 14, avgVol: v20, tr3 });
+    let tr3 = false, m20l = null; if (j >= 200) { const cs = a.map(b => b.close), sm = n => cs.slice(j - n + 1, j + 1).reduce((p, v) => p + v, 0) / n, m20 = sm(20), m50 = sm(50), m200 = sm(200);
+      tr3 = m50 > m200 && cs[j] > m50 && cs[j] < cs[j - 1] && cs[j - 1] < cs[j - 2] && cs[j - 2] < cs[j - 3];
+      // MA20 LİMİT (2026-11-28 ölçümü): yükselen trend (MA50>MA200, kapanış > MA20 > MA50) → ertesi gün MA20'ye gün içi dokunursa limit alım:
+      // aynı gün piyasaya +%0.58 (eğitim +0.57 / test +0.60), 3g +%0.45, 5g +%0.41. Kapanıştan alımda avantaj YOK (+%0.03) → kazanç limit fiyattan.
+      if (m50 > m200 && cs[j] > m20 && m20 > m50 && cs[j] / m20 - 1 <= 0.04) m20l = +m20.toFixed(2); }
+    rows.push({ sym: s, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100, atr: tr / 14, avgVol: v20, tr3, m20l });
   }
   return { day: istDayOf(xt.ts), rev: xt.low <= xp * 0.99 && xt.close > xp, xDay: (xt.close / xp - 1) * 100, xLow: (xt.low / xp - 1) * 100,
     top: [...rows].sort((p, q) => q.rec - p.rec).slice(0, 10), strong: rows.filter(r => r.dr >= 4 && r.pos >= 0.8 && r.vr >= 1.5).sort((p, q) => q.dr - p.dr).slice(0, 10),
     pull3: rows.filter(r => r.tr3 && r.dr > -4).sort((p, q) => p.dr - q.dr).slice(0, 10),
+    ma20: rows.filter(r => r.m20l && r.dr > -4).map(r => ({ sym: r.sym, c: r.c, lim: r.m20l, dist: (r.c / r.m20l - 1) * 100, stop: +(r.m20l - Math.min(r.atr, r.m20l * 0.05)).toFixed(2), tgt: +(r.m20l + Math.min(1.5 * r.atr, r.m20l * 0.075)).toFixed(2) })).sort((p, q) => p.dist - q.dist).slice(0, 8),
     weak: rows.filter(r => r.dr <= -4).sort((p, q) => p.dr - q.dr).slice(0, 10), weakSet: new Set(rows.filter(r => r.dr <= -4).map(r => r.sym)), ...rsi2Core(data, x) };
 }
 // RSI2 AŞIRI SATIM DÖNÜŞÜ (ABD botundan; BIST ölçümü 2 yıl): hisse 200g üstünde + RSI(2) < 5 → giriş kapanış, hedef 10g ort., stop −2 ATR, en çok 10 gün.
@@ -882,6 +886,7 @@ function shortTermMsg(k, final) {
   const kv = kvList(k);
   let m = `⚡ KISA VADE AL (1–3 gün)${final ? " — gün sonu" : ""}${k.rev ? `\n🔄 Endeks dönüş günü: XU100 gün içi ${pct(k.xLow)} → ${pct(k.xDay)} (ertesi gün ölçümü ort +%0.45)` : ""}`;
   m += kv.length ? "\n" + kv.map(r => `🟢 ${r.sym} · giriş ${r.c}₺ · hedef ${r.tgt}₺ · stop ${r.stop}₺ · ${r.why}`).join("\n") : "\nBugün ölçülmüş kısa vade AL koşulu oluşmadı.";
+  if (final && k.ma20?.length) m += `\n📌 Yarın MA20 LİMİT ALIM (gün içi MA20'ye değerse; ölçüm aynı gün +%0.58, 3g +%0.45, en çok 5 gün):\n` + k.ma20.map(r => `🟢 ${r.sym} · limit ${r.lim}₺ (şu an %${r.dist.toFixed(1)} yukarıda) · hedef ${r.tgt}₺ · stop ${r.stop}₺`).join("\n");
   m += `\n🧊 Uzak dur (gün ≤−%4; 3g piyasaya −%1.3): ` + (k.weak.length ? k.weak.map(r => `${r.sym} ${pct(r.dr)}`).join(", ") : "yok");
   if (!k.upMkt) m += "\n(RSI2 dönüşü yalnız XU100 MA200 üstündeyken — şu an kapalı)";
   return m;
@@ -945,6 +950,7 @@ async function runSummaryMode() {
     }
     const k = await shortTermC();
     if (k) await ideasAdd(kvList(k).map(r => ({ k: "KV", sym: r.sym, d: k.day, e: r.c, s: r.stop, t: r.tgt, h: 3, why: r.why })));
+    if (k?.ma20) st.ma20 = { made: k.day, items: k.ma20, hit: [] };   // ertesi işlem günü seansta izlenir
   } catch (e) { console.error("Fikir karnesi:", e.message); }
   const ok = await sendTG(await daySummary(st) + (karne ? "\n\n" + karne : ""));
   // HAFTALIK KARNE (Cuma): haftanın fikir karnesi + AI TRADER / model portföy / XU100 haftası — tek mesaj
@@ -985,7 +991,7 @@ async function ideasEval() {
   await gistPut({ [IDEAS]: { content: JSON.stringify(b) } });
   return b;
 }
-const KN = { AL: "🔔 Yeni AL", TETIK: "🎯 Takip tetiği", KV: "⚡ Kısa vade AL", DONUS: "🔄 Dönüş günü", GUCLU: "🚀 Güçlü kapanış", RSI2: "🔄 RSI2 dönüşü" };
+const KN = { AL: "🔔 Yeni AL", TETIK: "🎯 Takip tetiği", KV: "⚡ Kısa vade AL", MA20: "📌 MA20 limit", DONUS: "🔄 Dönüş günü", GUCLU: "🚀 Güçlü kapanış", RSI2: "🔄 RSI2 dönüşü" };
 function karneText(b, days) {
   const lim = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10), c = b.closed.filter(x => x.cd >= lim);
   if (!c.length) return `📒 KARNE (${days} gün): henüz sonuçlanan fikir yok · açık ${b.open.length}`;
@@ -1154,6 +1160,14 @@ async function main() {
         if (k?.rev) { await sendTG(`🔄 ENDEKS DÖNÜŞÜ (gün içi) · ${fmtTime()}\n` + shortTermMsg(k, false) + "\n\nGün içi fiyat (~15 dk gecikmeli); kesin liste gün sonu özetinde.\n⚠ Yatırım tavsiyesi değildir."); st.revDay = istDay; sent++; dirty = true; }
       }
     } catch (e) { console.error("Endeks dönüşü:", e.message); }
+    // 📌 MA20 LİMİT DOLDU: dünkü listedeki hisse bugün gün içi MA20 limitine değdi → anında bildirim + karne (giriş = limit, 5 gün)
+    if (st.ma20?.items?.length && st.ma20.made < istDay) {
+      const hits = [];
+      for (const r of st.ma20.items) { if (st.ma20.hit.includes(r.sym)) continue; const b = (await fetchDaily(r.sym).catch(() => [])).at(-1);
+        if (b && istDayOf(b.ts) === istDay && b.low <= r.lim) { st.ma20.hit.push(r.sym); hits.push(r); _newIdeas.push({ k: "MA20", sym: r.sym, d: istDay, e: Math.min(r.lim, b.open), s: r.stop, t: r.tgt, h: 5 }); } }
+      if (hits.length) { await sendTG(`✅ MA20 LİMİT DOLDU · ${fmtTime()}\n` + hits.map(r => `🟢 ${r.sym} · alım ${r.lim}₺ · hedef ${r.tgt}₺ · stop ${r.stop}₺ · en çok 5 gün`).join("\n") + "\n\nÖlçüm: aynı gün piyasaya +%0.58, 3g +%0.45 (limit fiyattan alımda).\n⚠ Yatırım tavsiyesi değildir."); sent++; }
+      dirty = true;
+    }
     // 17:30 sonrası HER taramada (kapanışa en yakın fiyat); uyarılan hisse st.mp.stopped'da → tekrar yok
     if (istHour * 60 + istMin >= 1050) { try { sent += await mpStops(st); dirty = true; } catch (e) { console.error("Model stop:", e.message); } }
   }
