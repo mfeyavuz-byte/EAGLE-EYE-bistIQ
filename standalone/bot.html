@@ -69,10 +69,15 @@ function render(d){
   if(sc.macro)notes+='<div class="note">📅 '+esc(sc.macro)+"</div>";
   if(sc.bear)notes+='<div class="note">🐻 Endeks düşüş rejiminde: AL sinyallerinde temkin.</div>';
   if(d.ts&&Date.now()-d.ts>36*3600e3&&new Date().getDay()%6)notes+='<div class="note">⏸ Bot 36 saatten uzun süredir veri yazmadı; çalışıyor mu kontrol et.</div>';
+  var mu=Object.entries(d.muted||{});if(mu.length)notes+='<div class="note">🔇 Susturulan kaynaklar (karne: 90 günde ≥20 sonuç, ort. R ≤ 0): '+esc(mu.map(function(e){return e[0].replace(/^(KV|EW):/,"")+" ("+e[1].n+", R "+e[1].r+")"}).join(" · "))+"</div>";
   $("notes").innerHTML=notes;
   var row=function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+"</span><span>"+tierTag(r.tier)+lvl(r.e,r.t,r.s)+"</span></div>"};
   var out=[];SEC=[];
   var add=function(id,lab,html){SEC.push([id,lab]);out.push(html)};
+  var T=d.top;
+  if(T){var tl=function(x,i){var cf=x.conf&&x.conf.length?' <span class="sub">+'+x.conf.length+" teyit ("+esc(x.conf.join(", "))+")</span>":"";
+      return '<div class="row"><span class="sym">'+(i+1)+". "+esc(x.sym)+'</span><span><span class="tag '+(x.sat?"t-sat":"t-al")+'">'+(x.sat?"SAT":"AL")+"</span>"+(x.sat?(x.c!=null?n(x.c)+"₺ · ":"")+esc(x.n)+" ("+esc(x.m)+")"+(x.lv?" · seviye <b>"+n(x.lv)+"₺</b>":"")+" → elde varsa çık":(x.lim?'<span class="lv">limit <b>'+n(x.c)+"₺</b> · hedef <b>"+n(x.tgt)+"₺</b> · stop <b>"+n(x.stop)+"₺</b></span>":lvl(x.c,x.tgt,x.stop))+" · "+esc(x.n)+" ("+esc(x.m)+")")+cf+"</span></div>"};
+    add("top","🏆 En iyiler",sec("top","🏆 BUGÜNÜN EN İYİLERİ","Tüm kaynaklar ölçülmüş günlük fazla getiriye göre sıralı · AL ve SAT kaynağı çakışan hisse alınmaz",((T.al||[]).length?T.al.map(tl).join(""):'<div class="empty">AL adayı yok.</div>')+((T.sat||[]).map(tl).join(""))+((T.clash||[]).length?'<div class="sub" style="margin-top:6px">⚖ Çakışan (alınmadı): '+esc(T.clash.slice(0,10).join(", "))+"</div>":"")));}
   add("tara","AL / SAT",'<div class="cols"><div>'+sec("al","🟢 AL"+(sc.al?" · "+sc.al.length:""),"GÜÇLÜ AL ölçümü: 10 günde piyasaya göre +%1.6",list(sc.al,row,8,"xal"))+"</div><div>"+sec("sat","🔴 SAT"+(sc.sat?" · "+sc.sat.length:""),"GÜÇLÜ SAT = SAT + gün ≤−%4 (ölçüm −%0.9)",list(sc.sat,row,8,"xsat"))+"</div></div>");
   if(k){
     var kr=function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+'</span><span><span class="tag t-al">'+esc(r.why||"AL")+"</span>"+pc(r.dr)+" "+lvl(r.c,r.tgt,r.stop)+"</span></div>"};
@@ -83,7 +88,7 @@ function render(d){
     if(k.weak&&k.weak.length)add("uzak","Uzak dur",sec("uzak","⛔ UZAK DUR","Gün ≤−%4 düşenler (ölçüm −%1.25)",k.weak.map(function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+"</span><span>"+pc(r.dr)+"</span></div>"}).join("")));
     var er=function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+'</span><span><span class="tag t-al">'+esc(r.why)+"</span>"+lvl(r.c,r.tgt,r.stop)+' <span class="sub">(ölçüm '+esc(r.m)+")</span></span></div>"};
     var es=function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+'</span><span><span class="tag t-sat">SAT</span>'+esc(r.why)+" · seviye <b>"+n(r.lv)+'₺</b> <span class="sub">(ölçüm '+esc(r.m)+")</span></span></div>"};
-    add("ew","Elliott",sec("ew","📐 ELLIOTT DALGALARI","Elliott eğitim kurallarıyla ölçüldü · zigzag ABC bitti 10g +%2.5 · 20g +%3.2 · üçgen yukarı 20g +%3.7 · 5. dalga 3g +%1.3 · 3. dalga 20g +%1.4 · SAT: 5 dalga itki bitti 10g −%3.8 · üçgen aşağı 20g −%3.1",list(k.ew,er,10,"xe")+(k.ews&&k.ews.length?'<h2 style="margin-top:12px">🔴 Elliott SAT</h2>'+list(k.ews,es,8,"xes"):"")));
+    add("ew","Elliott",sec("ew","📐 ELLIOTT DALGALARI","Elliott kuralları, 5 yıl / 3 dönemde ölçüldü · 5. dalga 10g +%2.4 · zigzag ABC 10g +%1.3 · 3. dalga 20g +%1.0 · üçgen yukarı karışık · SAT: itki bitti 20g −%3.4 · üçgen aşağı 20g −%2.1",list(k.ew,er,10,"xe")+(k.ews&&k.ews.length?'<h2 style="margin-top:12px">🔴 Elliott SAT</h2>'+list(k.ews,es,8,"xes"):"")));
     if(k.paw&&k.paw.length){var pw=function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+'</span><span><span class="tag '+(r.k==="DTK"?"t-wr":"t-sat")+'">⚠</span>'+esc(r.t)+"</span></div>"};
       add("uyari","Uyarılar",sec("uyari","⚠ DİP DÖNÜŞ / DÜŞEN TREND UYARILARI","Ölçüm: dipten dönüş görünümleri 10 günde −%1.2…−%2.2, sert düşüş sonrası hacimli düşen trend kırılımı −%2.0 → 10 gün tutmak için alım sinyali DEĞİL",list(k.paw,pw,10,"xu")));}
   }

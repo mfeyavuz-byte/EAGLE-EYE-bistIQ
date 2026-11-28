@@ -64,12 +64,15 @@ console.log("Formasyonlar (paCore: Elliott ABC / 3. dalga / uyarılar):");
   const { paCore, zigzag } = await import("./run.mjs"), B = (c, h = c * 1.005, l = c * 0.995) => ({ close: c, high: h, low: l, volume: 1e6 });
   const z = zigzag([100, 104, 108, 112, 100, 95, 101, 106].map(c => B(c, c, c)), 0.06);
   ok(z.length === 3 && z[0].t === "L" && z[0].p === 100 && z[0].at === 2 && z[1].t === "H" && z[1].p === 112 && z[1].at === 4 && z[2].t === "L" && z[2].p === 95 && z[2].at === 6, "zigzag: yön ilk %6 harekette belirlenir (dip 100, 2. gün) · tepe 112 (4. gün onay) · dip 95 (101 ≥ 95×1.06 → 6. gün onay) — gelecek sızmıyor");
-  // (zigzag ilk pivotu için başta %6+ düşüş) yükselen trend + ABC: H(130) → A(117) → B(124) → C(115) → B tepesi kırıldı
-  const up = [70, 66, 62, ...Array.from({ length: 140 }, (_, i) => 60 + i * 0.5)], abc = [125, 128, 130, 124, 118, 115, 119, 122, 125, 121, 117, 114, 118, 121, 124, 126];
+  // yükselen trend + zigzag ABC (%10): H 151 → A 120 → B 138 (A'nın %58'i geri alındı) → C 115 (< A) → B tepesi (138) kırıldı
+  const seg = (pts, st) => { const p = []; for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], n = Math.max(1, Math.round(Math.abs(b - a) / st)); for (let q = 0; q < n; q++) p.push(+(a + (b - a) * q / n).toFixed(2)); } p.push(pts.at(-1)); return p; };
+  const up = [70, 66, 62, ...Array.from({ length: 140 }, (_, i) => 60 + i * 0.65)], abc = seg([151, 120, 138, 115, 139.5], 5);
   const p = paCore([...up, ...abc].map(c => B(c, c, c)));
   const x = p.al.find(r => r.k === "ABC");
-  ok(x && x.stop < 126 && x.tgt > 126 && x.stop >= 126 * 0.92, "yükselen trendde ABC bitti → AL · stop C dibi altında (en çok −%8) · hedef girişin üstünde (" + (x && `stop ${x.stop} hedef ${x.tgt}`) + ")");
-  const dn = paCore([...up, ...abc].map(c => B(c, c, c)).map((b, i, a) => i > 140 ? b : { ...b, close: 200 - i * 0.5, high: 200 - i * 0.5, low: 200 - i * 0.5 }));
+  ok(x && x.stop < 139.5 && x.tgt > 139.5 && x.stop >= 139.5 * 0.92, "yükselen trendde zigzag ABC bitti → AL · stop C dibi altında (en çok −%8) · hedef girişin üstünde (" + (x && `stop ${x.stop} hedef ${x.tgt}`) + ")");
+  const bad = paCore([...up, ...seg([151, 120, 149, 115, 150], 5)].map(c => B(c, c, c)));
+  ok(!bad.al.some(r => r.k === "ABC"), "B, A'nın %78.6'sından fazlasını geri aldıysa (yassı) → zigzag ABC YOK");
+  const dn = paCore([...up, ...abc].map(c => B(c, c, c)).map((b, i) => i > 142 ? b : { ...b, close: 200 - i * 0.5, high: 200 - i * 0.5, low: 200 - i * 0.5 }));
   ok(!dn.al.some(r => r.k === "ABC"), "aynı ABC düşen trendde → AL YOK");
   ok(paCore(up.slice(0, 100).map(c => B(c))).al.length === 0, "kısa seri (<130 gün) → boş");
   // 5 dalga itki (%10): 60→80→70→110→95→120 sonra düşüş: 4. dalga dibi onayında 5. DALGA AL, 95 aşağı kırılınca İTKİ BİTTİ SAT
@@ -78,6 +81,21 @@ console.log("Formasyonlar (paCore: Elliott ABC / 3. dalga / uyarılar):");
   for (let i = 130; i < bars.length; i++) { const r = paCore(bars.slice(0, i + 1)); if (r.al.some(x => x.k === "W5")) hits.W5.push(path[i]); if (r.sat.some(x => x.k === "IMP")) hits.IMP.push(path[i]); }
   ok(hits.W5.length === 1 && hits.W5[0] > 95 && hits.W5[0] < 110, "itki kuralları sağlanınca 4. dalga dibi onay gününde 5. DALGA AL (fiyat " + hits.W5[0] + ")");
   ok(hits.IMP.length === 1 && hits.IMP[0] < 95, "5. dalga bitip 4. dalga dibi (95) kırılınca İTKİ BİTTİ → SAT, tek sefer (fiyat " + hits.IMP[0] + ")");
+}
+console.log("Otomatik susturma + en iyiler listesi:");
+{
+  const { muteCalc, setMuted, topPicks, kvList } = await import("./run.mjs"), td = new Date().toISOString().slice(0, 10);
+  const I = (k, why, R, n, src) => Array.from({ length: n }, () => ({ k, why, src, R, cd: td }));
+  const m = muteCalc({ closed: [...I("KV", "güçlü kapanış", -0.2, 25), ...I("KV", "dönüş günü", 0.4, 25), ...I("EW", "x", -0.5, 10, "W3"), ...I("AL", "", -1, 40), ...I("MA20", "", -0.1, 20)] });
+  ok(m["KV:güçlü kapanış"] && !m["KV:dönüş günü"] && !m["EW:W3"] && !m.AL && m.MA20, "≥20 sonuç + ort. R ≤ 0 → susturulur · kârlı / <20 sonuç / tarama AL'ı susturulmaz (" + Object.keys(m).join(", ") + ")");
+  const R = (sym, extra = {}) => ({ sym, c: 10, dr: 5, pos: 0.9, vr: 2, atr: 0.5, rec: 3, ...extra });
+  const k = { rev: true, xDay: 1, top: [R("AAA"), R("BBB")], strong: [R("CCC")], pull3: [], rsi2: [], weakSet: new Set(["DDD"]), weak: [{ sym: "DDD", c: 5, dr: -6 }], ma20: [], ew: [{ sym: "BBB", k: "W5", c: 10, stop: 9.5, tgt: 11 }], ews: [{ sym: "CCC", k: "IMP", c: 10, lv: 9.8 }], paw: [] };
+  setMuted({}); let T = topPicks(k, [], { gz: [] });
+  ok(T.al[0].sym === "AAA" || T.al[0].sym === "BBB", "en yüksek günlük ölçüm (dönüş günü 1.48/3g) ilk sırada");
+  ok(T.al.find(x => x.sym === "BBB")?.conf.includes("Elliott 5. dalga") && T.clash.includes("CCC") && !T.al.some(x => x.sym === "CCC") && T.sat[0].sym === "DDD", "aynı hissede ikinci kaynak = teyit · AL+SAT çakışan (CCC) listede yok · gün ≤−%4 SAT listesinde");
+  setMuted({ muted: { "KV:dönüş günü": { n: 20, r: -0.1 } } }); T = topPicks(k, [], { gz: [] });
+  ok(!T.al.some(x => x.key === "KV:dönüş günü") && kvList(k).every(r => r.why !== "dönüş günü") && kvList(k, true).some(r => r.why === "dönüş günü"), "susturulan kaynak listelerde yok ama karne kaydı için (all) gölgede üretiliyor");
+  setMuted({});
 }
 console.log(fail ? `\n❌ ${fail} BAŞARISIZ` : "\n✅ TÜM KARNE TESTLERİ GEÇTİ");
 process.exit(fail ? 1 : 0);
