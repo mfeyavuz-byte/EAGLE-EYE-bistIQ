@@ -739,6 +739,7 @@ async function ideaFor(sym, signals, bearRegime, st) {
       : K.xDay <= -1 && chg != null && chg >= 1 ? "↘ endeks düşerken yükseliyor (ölçüm: 3 günde piyasanın ~%1 gerisinde kalma eğilimi)" : "→ belirgin kısa vade sinyali yok";
     const isIdx = /^X(BANK|U\d{3}|USIN|UMAL|UHIZ|ELKT|ILTM|GIDA|HOLD|TEKS|KMYA|METL|ULAS|TRZM|SGRT|SPOR)$/.test(sym);   // endeks: puan, ₺ değil
     const out_ = { sym, c, chg, trig, mark, text: `${mark} ${sym} ${c}₺ (${chg == null ? "?" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"}) — ${head.split(" (")[0].replace(/^\S+ /, "")}${earnTag(en)}\n   Kısa vade: ${kv}\n   ${lvl}${trend === "düşüş" && !live ? " · ana trend düşüş" : ""}` };
+    const wm = wma200Status(w); if (wm) out_.text += "\n   " + wm.t;
     if (isIdx) out_.text = out_.text.replace(/₺/g, "");
     out_.atr = atr;
     return out_;
@@ -828,11 +829,13 @@ function shortCore(data, x) {
     const t = a[j], pc = a[j - 1].close, v20 = a.slice(j - 20, j).reduce((p, b) => p + (b.volume || 0), 0) / 20; if (!pc || v20 * t.close < 5e6) continue;
     let tr = 0; for (let k = j - 13; k <= j; k++) tr += Math.max(a[k].high - a[k].low, Math.abs(a[k].high - a[k - 1].close), Math.abs(a[k].low - a[k - 1].close));
     // TRENDDE 3 GÜN DÜŞÜŞ (2026-11-28 ölçümü, günlük 2 yıl): MA50>MA200, fiyat MA50 üstü, 3 kapanış üst üste düşüş → 3g piyasaya +%0.26 (eğitim +0.24 / test +0.29)
-    let tr3 = false, m20l = null; if (j >= 200) { const cs = a.map(b => b.close), sm = n => cs.slice(j - n + 1, j + 1).reduce((p, v) => p + v, 0) / n, m20 = sm(20), m50 = sm(50), m200 = sm(200);
-      tr3 = m50 > m200 && cs[j] > m50 && cs[j] < cs[j - 1] && cs[j - 1] < cs[j - 2] && cs[j - 2] < cs[j - 3];
+    // KISA TREND (kullanıcı isteği 2026-11-28: uzun vadeli MA200 yerine): MA20 > MA50 ve MA50 son 10 günde yükseliyor.
+    // Ölçüm: MA20 limit kısa trendle aynı gün +%0.61 / 3g +%0.57 (uzun: +0.58/+0.45) · 3g düşüş kısa +%0.22 (uzun +0.32; iki dönemde de +).
+    let tr3 = false, m20l = null; if (j >= 70) { const cs = a.map(b => b.close), sm = (n, e = j) => cs.slice(e - n + 1, e + 1).reduce((p, v) => p + v, 0) / n, m20 = sm(20), m50 = sm(50), up = m20 > m50 && m50 > sm(50, j - 10);
+      tr3 = up && cs[j] < cs[j - 1] && cs[j - 1] < cs[j - 2] && cs[j - 2] < cs[j - 3];
       // MA20 LİMİT (2026-11-28 ölçümü): yükselen trend (MA50>MA200, kapanış > MA20 > MA50) → ertesi gün MA20'ye gün içi dokunursa limit alım:
       // aynı gün piyasaya +%0.58 (eğitim +0.57 / test +0.60), 3g +%0.45, 5g +%0.41. Kapanıştan alımda avantaj YOK (+%0.03) → kazanç limit fiyattan.
-      if (m50 > m200 && cs[j] > m20 && m20 > m50 && cs[j] / m20 - 1 <= 0.04) m20l = +m20.toFixed(2); }
+      if (up && cs[j] > m20 && cs[j] / m20 - 1 <= 0.04) m20l = +m20.toFixed(2); }
     rows.push({ sym: s, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100, atr: tr / 14, avgVol: v20, tr3, m20l });
   }
   return { day: istDayOf(xt.ts), rev: xt.low <= xp * 0.99 && xt.close > xp, xDay: (xt.close / xp - 1) * 100, xLow: (xt.low / xp - 1) * 100,
@@ -866,6 +869,25 @@ async function shortTerm() {
 }
 const istDayOf = ts => new Date(ts + 3 * 3600e3).toISOString().slice(0, 10);
 const stLine = r => `${r.sym} ${r.c}₺ ${pct(r.dr)}${r.rec != null ? ` · dipten +%${r.rec.toFixed(1)}` : ""}`;
+// 🧭 200 HAFTALIK ORTALAMA (2026-11-28 ölçümü, haftalık 5 yıl, 8 hafta sonra piyasaya göre; iki dönemde de aynı yön):
+//  aşağı kırılım −%1.63 (2 hafta teyitli −%2.23) → SAT · ilk yukarı kırılım −%2.24 → ALMA (hacimli −%4.38, ≥%5 üstüne fırlama −%7.00 → KOVALAMA)
+//  · TEYİTLİ YUKARI (2 hafta üst üste üstünde) +%0.89 (+0.85/+0.95) → AL (orta vade) · destek testi −%0.75 → zayıf, alma.
+// w: haftalık mumlar (son mum = bu hafta; hafta içinde kısmi → "hafta kapanışında kesinleşir").
+function wma200Status(w) {
+  const a = (w || []).filter(b => b.close != null), j = a.length - 1; if (j < 202) return null;
+  const c = a.map(b => b.close), m = e => c.slice(e - 199, e + 1).reduce((p, v) => p + v, 0) / 200, w0 = m(j), w1 = m(j - 1), w2 = m(j - 2), d = (c[j] / w0 - 1) * 100, lv = +w0.toFixed(2);
+  if (c[j - 2] > w2 && c[j - 1] < w1 && c[j] < w0) return { k: "SAT", lv, d, t: `🔴 200 HMA TEYİTLİ AŞAĞI KIRILIM (2 hafta altında) → SAT/uzak dur · seviye ${lv} (ölçüm 8 hafta −%2.2)` };
+  if (c[j - 1] > w1 && c[j] < w0) return { k: "SAT", lv, d, t: `🔴 200 HMA AŞAĞI KIRILDI → SAT · seviye ${lv} (ölçüm 8 hafta −%1.6)` };
+  if (c[j - 2] < w2 && c[j - 1] > w1 && c[j] > w0) return { k: "AL", lv, d, t: `🟢 200 HMA TEYİTLİ YUKARI (2. hafta da üstünde) → AL (orta vade) · stop ${lv} altı haftalık kapanış (ölçüm 8 hafta +%0.9)` };
+  if (c[j - 1] < w1 && c[j] > w0) return { k: "BEKLE", lv, d, t: `⚠ 200 HMA İLK YUKARI KIRILIM → ${d >= 5 ? "KOVALAMA (≥%5 üstünde, ölçüm −%7)" : "ALMA, 2. haftalık kapanışı bekle (ilk kırılım ölçümü −%2.2)"} · seviye ${lv}` };
+  if (Math.abs(d) <= 3) return { k: "YAKIN", lv, d, t: `🧭 200 HMA'ya yakın (%${d.toFixed(1)}) · seviye ${lv} → altında haftalık kapanış SAT, üstünde 2 hafta kalırsa AL` };
+  return null;
+}
+async function wmaScan() {
+  const out = [];
+  for (let i = 0; i < syms.length; i += CONC) await Promise.all(syms.slice(i, i + CONC).map(async s => { const r = wma200Status(await fetchWeekly(s).catch(() => [])); if (r && r.k !== "YAKIN") out.push({ sym: s, ...r }); }));
+  const o = { SAT: 0, AL: 1, BEKLE: 2 }; return out.sort((p, q) => o[p.k] - o[q.k]);
+}
 // ⚡ KISA VADE AL (1–3 gün) — yalnız ölçülmüş kaynaklar (3g piyasaya göre): dönüş günü toparlanan +%1.48 · güçlü kapanış +%0.39 ·
 // trendde 3g düşüş +%0.26 · RSI2 (XU100 MA200 üstü) rastgeleye +%0.4. Dışlanan: gün ≤−%4 (−%1.25) ve endeks ≤−%1 iken ≥+%1 (−%1.0).
 // Seviye (1–3 günlük işleme göre): giriş kapanış · stop 1×ATR (en çok %5) · hedef 1.5×ATR (en çok %7.5) · en çok 3 iş günü.
@@ -933,6 +955,7 @@ async function daySummary(st) {
   if (ls) m += `\n\n🦅 Son tarama: ${ls.al.length} AL · ${ls.sat.length} SAT${ls.al.length ? `\n   AL: ${ls.al.join(", ")}` : ""}`;
   m += `\n   Bugün ilk kez AL olan: ${alNew.join(", ") || "yok"}`;
   try { const k = await shortTermC(); if (k) m += "\n\n" + shortTermMsg(k, true); } catch (e) { console.error("Kısa vade:", e.message); }
+  try { const wl = await wmaScan(); _site.wma = wl; m += "\n\n🧭 200 HAFTALIK ORTALAMA (hafta kapanışında kesinleşir):\n" + (wl.length ? wl.slice(0, 12).map(r => `${r.sym}: ${r.t}`).join("\n") : "Bu hafta kırılım yok."); } catch (e) { console.error("200 HMA:", e.message); }
   return m + "\n\n⚠ Yatırım tavsiyesi değildir.";
 }
 async function runSummaryMode() {
@@ -953,6 +976,9 @@ async function runSummaryMode() {
     if (k?.ma20) st.ma20 = { made: k.day, items: k.ma20, hit: [] };   // ertesi işlem günü seansta izlenir
   } catch (e) { console.error("Fikir karnesi:", e.message); }
   const ok = await sendTG(await daySummary(st) + (karne ? "\n\n" + karne : ""));
+  // site verisi: kısa vade, MA20 limit, 200 HMA, karne, model portföy (gün sonu)
+  try { const k = await shortTermC(); await siteSave({ kisa: k ? { day: k.day, rev: k.rev, xDay: k.xDay, upMkt: k.upMkt, al: kvList(k), ma20: k.ma20 || [], weak: k.weak.map(r => ({ sym: r.sym, dr: r.dr })) } : null,
+      wma: _site.wma || [], karne: karne || "", model: st.mp || null, mpHist: st.mpHist || [] }); } catch (e) { console.error("Site verisi:", e.message); }
   // HAFTALIK KARNE (Cuma): haftanın fikir karnesi + AI TRADER / model portföy / XU100 haftası — tek mesaj
   if (ok && new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", weekday: "short" }).format(new Date()) === "Fri") {
     try {
@@ -1017,6 +1043,13 @@ function macroToday(d) {
 }
 const istHM = () => { const p = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()); return +p.find(x => x.type === "hour").value * 60 + +p.find(x => x.type === "minute").value; };
 let _staleNote = "", _macroNote = "";
+// SİTE VERİSİ (gist eagle_signals.json): botun ürettiği her şeyin son hali → standalone/bot.html okur (uygulama gist'e YAZMAZ, yalnız okur).
+const SITE = "eagle_signals.json", _site = {};
+async function siteSave(part) {
+  const cur = await gistGet(SITE, {}); if (cur === READ_FAILED || !cur || typeof cur !== "object") return;
+  Object.assign(cur, part, { ts: Date.now() }); await gistPut({ [SITE]: { content: JSON.stringify(cur) } });
+}
+const siteRow = s => { const l = lv(s); return { sym: s.sym, tier: tierOf(s), e: s.price, t: l.tgt, s: l.stop, conf: s.confidence }; };
 const HELP = "🤖 KOMUTLAR\n/durum — AI TRADER anlık\n/performans — işlem istatistiği\n/model — model portföy ve getirisi\n/takip — takip listesi (12 hisse/endeks)\n/hisse SEMBOL — herhangi bir hisse için trade önerisi (örn. /hisse THYAO)\n/tara — tüm AL/SAT listesi (giriş · hedef · stop)\n/karne — gönderilen fikirlerin sonucu (HEDEF/STOP/SÜRE, 7 ve 30 gün)\n/yorum SEMBOL — Grok ile X (Twitter) duyarlılığı\n/aitest — AI anahtar testi\n\nNot: bot seansta 15 dk'da bir çalışır → cevap en geç ~15 dk içinde; seans dışında bir sonraki çalışmada.";
 async function runPortfolioMode() {
   const st0 = await gistGet(PAPER_FILE, null), st = (st0 && st0 !== READ_FAILED && typeof st0.cash === "number" && st0.pos) ? st0 : null;
@@ -1179,6 +1212,15 @@ async function main() {
     await sendTG(buildScanMsg(signals, gistErr, newSet)); sent++;
     // 1b) TAKİP LİSTESİ — kullanıcının hisseleri için ayrı trade önerisi mesajı (her raporda)
     try { await sendTG(await watchMsg(signals, bearRegime, st)); sent++; } catch (e) { console.error("Takip listesi:", e.message); }
+    // site verisi: tarama + takip listesi + AI TRADER (her raporda)
+    try {
+      const gz = s => tierOf(s).startsWith("GÜÇLÜ") ? 0 : 1, w = await watchEval(signals, bearRegime, st);
+      await siteSave({ scan: { t: Date.now(), bear: bearRegime, stale: _staleNote || "", macro: _macroNote || "",
+          al: signals.filter(s => s.signal === "AL").sort((a, b) => gz(a) - gz(b) || b.confidence - a.confidence).map(siteRow),
+          sat: signals.filter(s => s.signal === "SAT").sort((a, b) => gz(a) - gz(b) || b.confidence - a.confidence).map(siteRow) },
+        takip: w.map(x => ({ sym: x.sym, text: x.text })),
+        trader: st ? { cash: st.cash, start: st.start, pos: Object.entries(st.pos || {}).map(([s, p]) => ({ sym: s, lot: p.lot, entry: p.entry, last: (signals.find(x => x.sym === s) || {}).price || p.entry, sl: p.sl, tp: p.tp, setup: p.setup })) } : null });
+    } catch (e) { console.error("Site verisi:", e.message); }
 
     // 2) AI TRADER durumu (saatlik): yeni pozisyon?, açık pozisyonlar + açılıştan beri K/Z
     if (st) {
@@ -1285,5 +1327,5 @@ if (import.meta.url === _entry) {
 export const _setWatchCache = v => { _wCache = v; };   // yalnız test
 export { shortCore };
 export { ideasAdd, ideasEval, ideasLoad, karneText, tuneMinConf, macroToday };
-export { candlePatterns, tierOf, rsi2Core, kvList };
+export { candlePatterns, tierOf, rsi2Core, kvList, wma200Status, wmaScan };
 export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, ideaFor, daySummary, modelStatus, HELP, shortTerm, shortTermMsg, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };

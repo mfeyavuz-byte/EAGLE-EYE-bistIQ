@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f7f8fb">
+<title>bistIQ Bot Sinyalleri</title>
+<link rel="icon" href="icon-192.png">
+<style>
+:root{--bg:#f7f8fb;--card:#fff;--tx:#141821;--mut:#667085;--line:#e4e7ec;--al:#0a8f4f;--alb:#e7f6ee;--sat:#d92d20;--satb:#fdecea;--wr:#b54708;--wrb:#fef4e6;--ac:#2f5bea}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1116;--card:#171b22;--tx:#e8ebf0;--mut:#98a2b3;--line:#2a303a;--al:#3ccf86;--alb:#12291e;--sat:#ff6b5e;--satb:#2e1614;--wr:#f5a54a;--wrb:#2d2112;--ac:#7d9bff}}
+:root[data-theme="dark"]{--bg:#0e1116;--card:#171b22;--tx:#e8ebf0;--mut:#98a2b3;--line:#2a303a;--al:#3ccf86;--alb:#12291e;--sat:#ff6b5e;--satb:#2e1614;--wr:#f5a54a;--wrb:#2d2112;--ac:#7d9bff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:12px 16px calc(24px + env(safe-area-inset-bottom))}
+.wrap{max-width:860px;margin:0 auto}
+header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+header h1{font-size:19px;margin:0;flex:1;min-width:160px}
+a.btn,button{font:inherit;font-size:13px;color:var(--ac);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px;text-decoration:none;cursor:pointer}
+.meta{color:var(--mut);font-size:13px;margin-bottom:8px}
+.note{background:var(--wrb);color:var(--wr);border-radius:8px;padding:8px 10px;margin:6px 0;font-size:14px}
+nav{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:6px;scrollbar-width:none}
+nav button{white-space:nowrap}
+nav button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+section h2{font-size:16px;margin:0 0 4px}
+section .sub{color:var(--mut);font-size:12.5px;margin-bottom:8px}
+.row{display:grid;grid-template-columns:minmax(70px,auto) 1fr;gap:4px 10px;padding:8px 0;border-top:1px solid var(--line);align-items:baseline}
+.row:first-of-type{border-top:0}
+.sym{font-weight:700}
+.lv{font-variant-numeric:tabular-nums;font-size:14px}
+.lv b{font-weight:600}
+.tag{display:inline-block;font-size:12px;font-weight:700;border-radius:6px;padding:1px 7px;margin-right:6px}
+.t-al{background:var(--alb);color:var(--al)}.t-sat{background:var(--satb);color:var(--sat)}.t-wr{background:var(--wrb);color:var(--wr)}
+.pre{white-space:pre-line;font-size:14px;padding:8px 0;border-top:1px solid var(--line)}
+.pre:first-of-type{border-top:0}
+.empty{color:var(--mut);font-size:14px}
+.more{margin-top:6px}
+.pos{color:var(--al)}.neg{color:var(--sat)}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:620px){.cols{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><h1>🦅 Bot Sinyalleri</h1><a class="btn" href="./">← Uygulama</a><button id="rf">Yenile</button></header>
+<div class="meta" id="meta">Yükleniyor…</div>
+<div id="notes"></div>
+<nav id="nav"></nav>
+<div id="out"></div>
+</div>
+<script>
+(function(){
+var GIST=(function(){try{return (localStorage.getItem("feybot_gistid")||"").trim()}catch(e){return ""}})()||"1ed22561b2f2803380f3dfb99cda53e7";
+var $=function(id){return document.getElementById(id)};
+var esc=function(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})};
+var n=function(v){if(v==null||!isFinite(v))return "–";var a=Math.abs(v);return (+v).toLocaleString("tr-TR",{maximumFractionDigits:a>=1000?0:2})};
+var pc=function(v){return v==null||!isFinite(v)?"":'<span class="'+(v>=0?"pos":"neg")+'">'+(v>=0?"+%":"−%")+Math.abs(v).toFixed(2).replace(".",",")+"</span>"};
+var ago=function(ts){if(!ts)return "";var m=Math.round((Date.now()-ts)/6e4);return m<60?m+" dk önce":m<1440?Math.round(m/60)+" sa önce":Math.round(m/1440)+" gün önce"};
+var when=function(ts){return ts?new Date(ts).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+" ("+ago(ts)+")":"–"};
+function tierTag(t){var s=/SAT/.test(t);return '<span class="tag '+(s?"t-sat":"t-al")+'">'+(/GÜÇLÜ/.test(t)?(s?"🔴🔴 ":"🟢🟢 "):(s?"🔴 ":"🟢 "))+esc(t)+"</span>"}
+function lvl(e,t,s){return '<span class="lv">giriş <b>'+n(e)+'₺</b> · hedef <b>'+n(t)+'₺</b> · stop <b>'+n(s)+"₺</b></span>"}
+function list(rows,fn,show,id){if(!rows||!rows.length)return '<div class="empty">Şu an yok.</div>';var h=rows.slice(0,show).map(fn).join("");if(rows.length>show)h+='<div id="'+id+'" hidden>'+rows.slice(show).map(fn).join("")+'</div><button class="more" data-x="'+id+'">Tümünü göster ('+rows.length+")</button>";return h}
+function sec(id,title,sub,body){return '<section id="s-'+id+'"><h2>'+title+"</h2>"+(sub?'<div class="sub">'+sub+"</div>":"")+body+"</section>"}
+var SEC=[];
+function render(d){
+  var sc=d.scan||{},k=d.kisa,notes="";
+  $("meta").textContent="Tarama: "+when(sc.t)+" · Gün sonu: "+(k&&k.day?k.day:"–")+" · Son güncelleme: "+when(d.ts);
+  if(sc.stale)notes+='<div class="note">⚠ '+esc(sc.stale)+"</div>";
+  if(sc.macro)notes+='<div class="note">📅 '+esc(sc.macro)+"</div>";
+  if(sc.bear)notes+='<div class="note">🐻 Endeks düşüş rejiminde: AL sinyallerinde temkin.</div>';
+  if(d.ts&&Date.now()-d.ts>36*3600e3&&new Date().getDay()%6)notes+='<div class="note">⏸ Bot 36 saatten uzun süredir veri yazmadı; çalışıyor mu kontrol et.</div>';
+  $("notes").innerHTML=notes;
+  var row=function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+"</span><span>"+tierTag(r.tier)+lvl(r.e,r.t,r.s)+"</span></div>"};
+  var out=[];SEC=[];
+  var add=function(id,lab,html){SEC.push([id,lab]);out.push(html)};
+  add("tara","AL / SAT",'<div class="cols"><div>'+sec("al","🟢 AL"+(sc.al?" · "+sc.al.length:""),"GÜÇLÜ AL ölçümü: 10 günde piyasaya göre +%1.6",list(sc.al,row,8,"xal"))+"</div><div>"+sec("sat","🔴 SAT"+(sc.sat?" · "+sc.sat.length:""),"GÜÇLÜ SAT = SAT + gün ≤−%4 (ölçüm −%0.9)",list(sc.sat,row,8,"xsat"))+"</div></div>");
+  if(k){
+    var kr=function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+'</span><span><span class="tag t-al">'+esc(r.why||"AL")+"</span>"+pc(r.dr)+" "+lvl(r.c,r.tgt,r.stop)+"</span></div>"};
+    var sub=(k.rev?"↗ Endeks dönüş günü · ":"")+"XU100 "+pc(k.xDay)+" · 1–3 gün, ölçülmüş kaynaklar";
+    add("kisa","Kısa vade",sec("kisa","⚡ KISA VADE AL (1–3 gün)",sub,list(k.al,kr,10,"xk")));
+    var mr=function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+'</span><span class="lv">limit alım <b>'+n(r.lim)+"₺</b> (şimdi "+n(r.c)+"₺, %"+(r.dist!=null?r.dist.toFixed(1).replace(".",","):"–")+" yukarıda) · hedef <b>"+n(r.tgt)+"₺</b> · stop <b>"+n(r.stop)+"₺</b></span></div>"};
+    add("ma20","MA20 limit",sec("ma20","📌 MA20 LİMİT ALIM (yarın)","Yükselen kısa trendde MA20'ye limit emir · ölçüm: aynı gün +%0.61, 3 gün +%0.57",list(k.ma20,mr,10,"xm")));
+    if(k.weak&&k.weak.length)add("uzak","Uzak dur",sec("uzak","⛔ UZAK DUR","Gün ≤−%4 düşenler (ölçüm −%1.25)",k.weak.map(function(r){return '<div class="row"><span class="sym">'+esc(r.sym)+"</span><span>"+pc(r.dr)+"</span></div>"}).join("")));
+  }
+  var wm=d.wma||[];
+  var wr=function(r){var c=r.k==="AL"?"t-al":r.k==="SAT"?"t-sat":"t-wr";return '<div class="row"><span class="sym">'+esc(r.sym)+'</span><span><span class="tag '+c+'">'+esc(r.k)+"</span>"+esc(String(r.t||"").replace(/^\S+\s/,""))+(r.d!=null?" · HMA'ya göre "+pc(r.d):"")+"</span></div>"};
+  add("wma","200 HMA",sec("wma","🧭 200 HAFTALIK ORTALAMA","Hafta kapanışında kesinleşir · teyitli yukarı (2 hafta üstünde) AL +%0.9 · aşağı kırılım SAT −%1.6 · ilk yukarı kırılımda ALMA",list(wm,wr,12,"xw")));
+  if(d.takip)add("takip","Takip",sec("takip","🎯 TAKİP LİSTESİ","",d.takip.map(function(r){return '<div class="pre">'+esc(r.text)+"</div>"}).join("")));
+  var m=d.model;
+  if(m){var mp=function(a){return (a||[]).map(function(r){var s=m.stopped&&m.stopped[r.sym];return '<div class="row"><span class="sym">'+esc(r.sym)+'</span><span class="lv">giriş <b>'+n(r.price)+"₺</b> · stop <b>"+n(r.stop)+"₺</b>"+(s?' <span class="tag t-sat">stop oldu</span>':"")+"</span></div>"}).join("")||'<div class="empty">–</div>'};
+    add("model","Model portföy",sec("model","📊 MODEL PORTFÖY","Hafta: "+esc(m.date||m.wk||"")+" · eşit ağırlık · her Pazartesi 08:00 yenilenir",'<div class="cols"><div><h2>Aylık</h2>'+mp(m.monthly)+"</div><div><h2>3 Aylık</h2>"+mp(m.quarterly)+"</div></div>"));}
+  var t=d.trader;
+  if(t){var val=(t.cash||0)+(t.pos||[]).reduce(function(a,p){return a+p.lot*(p.last||p.entry)},0);
+    var tr=function(p){return '<div class="row"><span class="sym">'+esc(p.sym)+'</span><span class="lv">'+n(p.lot)+" lot @ "+n(p.entry)+"₺ → "+n(p.last)+"₺ "+pc((p.last/p.entry-1)*100)+" · stop <b>"+n(p.sl)+"₺</b> · hedef <b>"+n(p.tp)+"₺</b>"+(p.setup?" · "+esc(p.setup):"")+"</span></div>"};
+    add("trader","AI TRADER",sec("trader","🤖 AI TRADER (kağıt)","Değer ≈ "+n(val)+"₺ "+pc(t.start?(val/t.start-1)*100:null)+" · nakit "+n(t.cash)+"₺",(t.pos&&t.pos.length)?t.pos.map(tr).join(""):'<div class="empty">Açık pozisyon yok.</div>'));}
+  if(d.karne)add("karne","Karne",sec("karne","📒 KARNE","Botun önerilerinin gerçekleşen sonucu",'<div class="pre">'+esc(d.karne)+"</div>"));
+  $("out").innerHTML=out.join("");
+  $("nav").innerHTML=SEC.map(function(s){return '<button data-go="'+s[0]+'">'+esc(s[1])+"</button>"}).join("");
+}
+document.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;
+  if(b.dataset.x){var el=$(b.dataset.x);el.hidden=!el.hidden;b.textContent=el.hidden?"Tümünü göster":"Daha az göster"}
+  if(b.dataset.go){var i=SEC.findIndex(function(x){return x[0]===b.dataset.go});var el2=$("out").children[i];if(el2)el2.scrollIntoView({behavior:"smooth",block:"start"})}
+});
+async function load(){
+  $("meta").textContent="Yükleniyor…";
+  try{
+    var r=await fetch("https://api.github.com/gists/"+GIST,{cache:"no-store"});
+    if(!r.ok)throw new Error("GitHub HTTP "+r.status+(r.status===403?" (saatlik okuma sınırı; biraz sonra dene)":""));
+    var g=await r.json(),f=g.files&&g.files["eagle_signals.json"];
+    if(!f)throw new Error("Bot henüz site verisi yazmadı (ilk taramadan sonra görünür).");
+    var c=f.truncated?await (await fetch(f.raw_url,{cache:"no-store"})).text():f.content;
+    var d=JSON.parse(c);render(d);try{localStorage.setItem("bot_page_cache",c)}catch(e){}
+  }catch(e){
+    var cc=null;try{cc=localStorage.getItem("bot_page_cache")}catch(_){}
+    if(cc){try{render(JSON.parse(cc))}catch(_){}}
+    $("notes").insertAdjacentHTML("afterbegin",'<div class="note">⚠ '+esc(e.message)+(cc?" · son kaydedilen veri gösteriliyor":"")+"</div>");
+    if(!cc)$("meta").textContent="Veri alınamadı.";
+  }
+}
+$("rf").onclick=load;load();
+})();
+</script>
+</body>
+</html>

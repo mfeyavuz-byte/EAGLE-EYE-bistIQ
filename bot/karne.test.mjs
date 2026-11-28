@@ -49,5 +49,13 @@ ok(macroToday("2026-12-03").includes("TÜİK enflasyon verisi 10:00"), "3 Aralı
 ok(macroToday("2026-12-10").includes("TCMB faiz kararı 14:00"), "10 Aralık 2026 → TCMB PPK");
 ok(macroToday("2027-01-04").includes("TÜİK enflasyon verisi 10:00") && !macroToday("2027-01-03").length, "3 Ocak 2027 Pazar → TÜİK 4 Ocak Pazartesi'ye kayar");
 ok(macroToday("2026-12-04").length === 0, "sıradan gün → boş");
+console.log("200 haftalık ortalama (wma200Status):");
+{
+  const { wma200Status } = await import("./run.mjs"), W = tail => [...Array(210).fill(100), ...tail].map(c => ({ close: c }));
+  ok(wma200Status(W([102, 98])).k === "SAT" && wma200Status(W([102, 98, 97])).t.includes("TEYİTLİ AŞAĞI"), "üstten alta kapanış → SAT · 2. hafta da altında → TEYİTLİ SAT");
+  ok(wma200Status(W([98, 101])).k === "BEKLE" && wma200Status(W([98, 101])).t.includes("ALMA") && wma200Status(W([98, 108])).t.includes("KOVALAMA"), "ilk yukarı kırılım → ALMA (≥%5 üstündeyse KOVALAMA)");
+  ok(wma200Status(W([98, 101, 102])).k === "AL", "2. hafta da üstünde → AL (teyitli)");
+  ok(wma200Status(W([101, 101.5])).k === "YAKIN" && wma200Status(W([120, 121])) === null && wma200Status(W([]).slice(0, 150)) === null, "yakın → YAKIN · uzak → yok · kısa seri → yok");
+}
 console.log(fail ? `\n❌ ${fail} BAŞARISIZ` : "\n✅ TÜM KARNE TESTLERİ GEÇTİ");
 process.exit(fail ? 1 : 0);
