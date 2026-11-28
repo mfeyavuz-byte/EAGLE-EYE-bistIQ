@@ -740,6 +740,8 @@ async function ideaFor(sym, signals, bearRegime, st) {
     const isIdx = /^X(BANK|U\d{3}|USIN|UMAL|UHIZ|ELKT|ILTM|GIDA|HOLD|TEKS|KMYA|METL|ULAS|TRZM|SGRT|SPOR)$/.test(sym);   // endeks: puan, ₺ değil
     const out_ = { sym, c, chg, trig, mark, text: `${mark} ${sym} ${c}₺ (${chg == null ? "?" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"}) — ${head.split(" (")[0].replace(/^\S+ /, "")}${earnTag(en)}\n   Kısa vade: ${kv}\n   ${lvl}${trend === "düşüş" && !live ? " · ana trend düşüş" : ""}` };
     const wm = wma200Status(w); if (wm) out_.text += "\n   " + wm.t;
+    const pa = paCore(d); for (const x of pa.al) out_.text += `\n   📐 ${x.why} → AL (10–20g) · giriş ${c}₺ · hedef ${x.tgt}₺ · stop ${x.stop}₺ (ölçüm ${x.m})`;
+    for (const x of pa.warn) out_.text += `\n   ⚠ ${x.t}`;
     if (isIdx) out_.text = out_.text.replace(/₺/g, "");
     out_.atr = atr;
     return out_;
@@ -820,6 +822,56 @@ async function mpStops(st) {
 //  GÜÇLÜ KAPANIŞ (gün ≥+%4, kapanış gün aralığının üst %20'si, hacim ≥1.5×): 1g +%0.37, 3g +%0.39 (yarılar +0.44/+0.34, n=2183).
 //  SERT DÜŞÜŞ (gün ≤−%4): 1g −%0.67, 3g −%1.25 (yarılar −0.95/−1.44) → kısa vadede zayıflık SÜRÜYOR, "dipten al" yanlış.
 //  Ölçülüp REDDEDİLENLER (şans düzeyi): saatlik RSI dönüşü, gün içi −%2→dünkü kapanış üstü, 3g −%5→EMA20 geri alma.
+// 📐 FORMASYONLAR (2026-11-28 ölçümü, günlük 2 yıl, 196 hisse, piyasaya göre fazla getiri; eğitim %60 / test %40):
+//  ✓ ELLIOTT ABC (yükselen trendde düzeltme bitti: kapanış > MA50, MA50 20 günde yükselen; zigzag H→A→B(<H)→C(<A), B tepesi kırıldı):
+//    zigzag %10: 3g +%0.83 · 10g +%2.93 (3.09/2.69) · 20g +%4.14 (4.48/3.63) · zigzag %6: 3g +%1.13 (0.85/1.55) · 10g +%1.82 · 20g +%2.09
+//  ✓ ELLIOTT 3. DALGA (zigzag %6: dip → 1. dalga tepe → 2. dalga %38–79 geri çekilme, 1. dalga tepesi kırıldı; ≥%20 düşüş sonrası HARİÇ — orada 10g −%2.55):
+//    canlı kodla: 3g +%0.36 · 10g +%0.84 (0.44/1.44) · 20g +%1.41 (0.86/2.23) · ABC %6 (yalnız %10 yokken) 10g +%1.26 · 20g +%1.49
+//  ✗ DİP DÖNÜŞ görünümleri (alım sinyali DEĞİL, uyarı): ≥%25 düşüş + dip ≤10g + 5g tepe kırıldı 10g −%1.19 · RSI pozitif uyumsuzluk −%1.16 ·
+//    ikili dip/boyun kırılımı −%2.18 · ≥%20 düşüş sonrası MA20 kesişim −%0.31 (endeks yükselişteyken de negatif).
+//  ✗ DÜŞEN TREND KIRILIMI (2 alçalan pivot tepe çizgisi): tümü 10g +%0.04 · tuzak hariç +%0.48 (0.11/1.02, zayıf) · sert düşüş sonrası HACİMLİ 10g −%2.00 → TUZAK uyarısı.
+function zigzag(a, thr) {   // nedensel: pivot, ters yönde thr oranında hareketle ONAYLANIR (at = onay günü) — ölçülen kodla birebir
+  const P = []; let dir = 0, ei = 0, ep = a[0].close;
+  for (let j = 1; j < a.length; j++) { const h = a[j].high, l = a[j].low;
+    if (dir >= 0) { if (h > ep) { ep = h; ei = j; } if (l <= ep * (1 - thr)) { if (dir === 1 || h <= ep) P.push({ i: ei, p: ep, t: "H", at: j }); dir = -1; ep = l; ei = j; continue; } }
+    if (dir <= 0) { if (l < ep) { ep = l; ei = j; } if (h >= ep * (1 + thr)) { P.push({ i: ei, p: ep, t: "L", at: j }); dir = 1; ep = h; ei = j; } } }
+  return P;
+}
+// a: günlük mumlar (son mum = değerlendirilen gün). Döner: { al: [{k, why, stop, tgt, ...}], warn: [{k, t}] }
+function paCore(a) {
+  a = (a || []).filter(b => b.close != null && b.high != null && b.low != null); const j = a.length - 1, out = { al: [], warn: [] }; if (j < 130) return out;
+  const c = a.map(b => b.close), sm = (n, e) => c.slice(e - n + 1, e + 1).reduce((p, v) => p + v, 0) / n, r2 = v => +v.toFixed(2);
+  const hi120 = Math.max(...a.slice(j - 120, j + 1).map(b => b.high)), dd = (c[j] / hi120 - 1) * 100;
+  const lo60 = Math.min(...a.slice(j - 60, j + 1).map(b => b.low)), loIdx = j - 60 + a.slice(j - 60, j + 1).findIndex(b => b.low === lo60);
+  const v20 = a.slice(j - 20, j).reduce((p, b) => p + (b.volume || 0), 0) / 20, vr = (a[j].volume || 0) / (v20 || 1);
+  const lvl = (stop, tgt) => { const st = Math.max(stop, c[j] * 0.92); return { stop: r2(st), tgt: r2(Math.max(c[j] * 1.02, Math.min(tgt ?? c[j] + 2 * (c[j] - st), c[j] * 1.25))) }; };
+  const Z6 = zigzag(a, 0.06), Z10 = zigzag(a, 0.10);
+  // ELLIOTT ABC (önce %10, yoksa %6)
+  for (const [Z, tag] of [[Z10, "%10"], [Z6, "%6"]]) { const P = Z.filter(p => p.at <= j); if (P.length < 4) continue; const [x0, x1, x2, x3] = P.slice(-4);
+    if (x0.t === "H" && x2.p < x0.p && x3.p < x1.p && c[j] > sm(50, j) && sm(50, j) > sm(50, j - 20) && c[j] > x2.p && c[j - 1] <= x2.p) {
+      out.al.push({ k: "ABC", z: tag, why: "Elliott ABC düzeltme bitti (yükselen trend)", m: tag === "%10" ? "10g +%2.9 · 20g +%4.1" : "3g +%1.0 · 10g +%1.3", ...lvl(x3.p * 0.99) }); break; } }
+  { const P = Z6.filter(p => p.at <= j);   // ELLIOTT 3. DALGA
+    if (P.length >= 3 && dd > -20) { const [q0, q1, q2] = P.slice(-3);
+      if (q0.t === "L" && q2.p > q0.p) { const rt = (q1.p - q2.p) / (q1.p - q0.p);
+        if (rt >= 0.382 && rt <= 0.786 && c[j] > q1.p && c[j - 1] <= q1.p) out.al.push({ k: "W3", why: "Elliott 3. dalga başlangıcı", m: "10g +%0.8 · 20g +%1.4", ...lvl(q2.p * 0.99, q2.p + 1.618 * (q1.p - q0.p)) }); } } }
+  // DİP DÖNÜŞ görünümleri → uyarı
+  const hh = (e, n) => Math.max(...a.slice(e - n, e).map(b => b.high));
+  if (dd <= -25 && j - loIdx <= 10 && j - loIdx >= 2 && c[j] > hh(j, 5) && c[j - 1] <= hh(j - 1, 5)) out.warn.push({ k: "DIP", t: "dipten dönüş görünümü (≥%25 düşüş sonrası 5g tepe kırıldı) — ölçüm 10g −%1.2: 10 gün tutmak için ALMA (1–3 gün ayrı)" });
+  { const rs = rsiSeries(c), pl = Math.min(...c.slice(j - 40, j - 15)), pli = j - 40 + c.slice(j - 40, j - 15).indexOf(pl), cl = Math.min(...c.slice(j - 10, j + 1));
+    if (dd <= -20 && cl < pl && rs[j - 10 + c.slice(j - 10, j + 1).indexOf(cl)] > rs[pli] + 3 && c[j] > a[j - 1].high) out.warn.push({ k: "DIV", t: "RSI pozitif uyumsuzluk — ölçüm 10g −%1.2: dönüş teyidi değil, 10 gün tutmak için ALMA" }); }
+  { const Ls = Z6.filter(p => p.t === "L" && p.at <= j).slice(-2), Hs = Z6.filter(p => p.t === "H" && p.at <= j);
+    if (Ls.length === 2 && Ls[1].p > Ls[0].p * 1.01 && Ls[1].i - Ls[0].i <= 40 && dd <= -20) { const mid = Hs.filter(h => h.i > Ls[0].i && h.i < Ls[1].i).pop();
+      if (mid && c[j] > mid.p && c[j - 1] <= mid.p) out.warn.push({ k: "W", t: "ikili dip / boyun kırılımı — ölçüm 10g −%2.2: düşen piyasada tuzak, 10 gün tutmak için ALMA" }); } }
+  // DÜŞEN TREND KIRILIMI (pivot tepe: 5 sol / 5 sağ; j günü yalnız i ≤ j−5 bilinir)
+  { const PH = []; for (let i = Math.max(5, j - 125); i <= j - 5; i++) { let ok = 1; for (let k = 1; k <= 5; k++) if (a[i - k].high >= a[i].high || a[i + k].high > a[i].high) { ok = 0; break; } if (ok) PH.push(i); }
+    const K = PH.filter(i => i >= j - 120);
+    if (K.length >= 2) { const i2 = K[K.length - 1]; let i1 = -1; for (let q = K.length - 2; q >= 0; q--) if (a[K[q]].high > a[i2].high * 1.03 && i2 - K[q] >= 10) { i1 = K[q]; break; }
+      if (i1 >= 0) { const sl = (a[i2].high - a[i1].high) / (i2 - i1), L = x => a[i2].high + sl * (x - i2); let clean = 1; for (let x = i2 + 1; x < j; x++) if (c[x] > L(x)) { clean = 0; break; }
+        if (clean && c[j] > L(j) && c[j - 1] <= L(j - 1)) out.warn.push(dd <= -20 && vr >= 1.5 ? { k: "DTK!", t: `düşen trend kırılımı (${r2(L(j))}₺) sert düşüş sonrası hacimli — ölçüm 10g −%2.0: TUZAK riski, ALMA` }
+          : { k: "DTK", t: `düşen trend kırılımı (${r2(L(j))}₺) — ölçüm zayıf (10g +%0.5): tek başına alım sebebi değil` }); } } }
+  return out;
+}
+function rsiSeries(c) { const r = Array(c.length).fill(50); let g = 0, l = 0; for (let i = 1; i < c.length; i++) { const d = c[i] - c[i - 1]; if (i <= 14) { g += Math.max(d, 0) / 14; l += Math.max(-d, 0) / 14; } else { g = (g * 13 + Math.max(d, 0)) / 14; l = (l * 13 + Math.max(-d, 0)) / 14; } if (i >= 14) r[i] = l ? 100 - 100 / (1 + g / l) : 100; } return r; }
 // Saf çekirdek (canlı shortTerm + portföy simülatörü AYNI kod): data = { SYM: günlük mumlar (son mum = değerlendirilen gün) }, x = XU100 günlük
 function shortCore(data, x) {
   if (!x || x.length < 2) return null;
@@ -836,12 +888,15 @@ function shortCore(data, x) {
       // MA20 LİMİT (2026-11-28 ölçümü): yükselen trend (MA50>MA200, kapanış > MA20 > MA50) → ertesi gün MA20'ye gün içi dokunursa limit alım:
       // aynı gün piyasaya +%0.58 (eğitim +0.57 / test +0.60), 3g +%0.45, 5g +%0.41. Kapanıştan alımda avantaj YOK (+%0.03) → kazanç limit fiyattan.
       if (up && cs[j] > m20 && cs[j] / m20 - 1 <= 0.04) m20l = +m20.toFixed(2); }
-    rows.push({ sym: s, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100, atr: tr / 14, avgVol: v20, tr3, m20l });
+    const pa = paCore(a);
+    rows.push({ sym: s, pa, c: t.close, dr: (t.close / pc - 1) * 100, pos: t.high > t.low ? (t.close - t.low) / (t.high - t.low) : 0.5, vr: v20 ? (t.volume || 0) / v20 : 0, rec: (t.close - t.low) / pc * 100, atr: tr / 14, avgVol: v20, tr3, m20l });
   }
   return { day: istDayOf(xt.ts), rev: xt.low <= xp * 0.99 && xt.close > xp, xDay: (xt.close / xp - 1) * 100, xLow: (xt.low / xp - 1) * 100,
     top: [...rows].sort((p, q) => q.rec - p.rec).slice(0, 10), strong: rows.filter(r => r.dr >= 4 && r.pos >= 0.8 && r.vr >= 1.5).sort((p, q) => q.dr - p.dr).slice(0, 10),
     pull3: rows.filter(r => r.tr3 && r.dr > -4).sort((p, q) => p.dr - q.dr).slice(0, 10),
     ma20: rows.filter(r => r.m20l && r.dr > -4).map(r => ({ sym: r.sym, c: r.c, lim: r.m20l, dist: (r.c / r.m20l - 1) * 100, stop: +(r.m20l - Math.min(r.atr, r.m20l * 0.05)).toFixed(2), tgt: +(r.m20l + Math.min(1.5 * r.atr, r.m20l * 0.075)).toFixed(2) })).sort((p, q) => p.dist - q.dist).slice(0, 8),
+    ew: rows.flatMap(r => r.pa.al.map(x => ({ sym: r.sym, c: r.c, dr: r.dr, atr: r.atr, ...x }))).sort((p, q) => (p.k === "ABC" ? 0 : 1) - (q.k === "ABC" ? 0 : 1) || q.dr - p.dr),
+    paw: rows.flatMap(r => r.pa.warn.map(x => ({ sym: r.sym, c: r.c, dr: r.dr, ...x }))),
     weak: rows.filter(r => r.dr <= -4).sort((p, q) => p.dr - q.dr).slice(0, 10), weakSet: new Set(rows.filter(r => r.dr <= -4).map(r => r.sym)), ...rsi2Core(data, x) };
 }
 // RSI2 AŞIRI SATIM DÖNÜŞÜ (ABD botundan; BIST ölçümü 2 yıl): hisse 200g üstünde + RSI(2) < 5 → giriş kapanış, hedef 10g ort., stop −2 ATR, en çok 10 gün.
@@ -869,24 +924,33 @@ async function shortTerm() {
 }
 const istDayOf = ts => new Date(ts + 3 * 3600e3).toISOString().slice(0, 10);
 const stLine = r => `${r.sym} ${r.c}₺ ${pct(r.dr)}${r.rec != null ? ` · dipten +%${r.rec.toFixed(1)}` : ""}`;
-// 🧭 200 HAFTALIK ORTALAMA (2026-11-28 ölçümü, haftalık 5 yıl, 8 hafta sonra piyasaya göre; iki dönemde de aynı yön):
-//  aşağı kırılım −%1.63 (2 hafta teyitli −%2.23) → SAT · ilk yukarı kırılım −%2.24 → ALMA (hacimli −%4.38, ≥%5 üstüne fırlama −%7.00 → KOVALAMA)
-//  · TEYİTLİ YUKARI (2 hafta üst üste üstünde) +%0.89 (+0.85/+0.95) → AL (orta vade) · destek testi −%0.75 → zayıf, alma.
+// 🧭 200 HAFTALIK ORTALAMA (2026-11-28 ölçümleri, haftalık 5 yıl, 196 hisse; 4/8 hafta sonra piyasaya göre; eğitim/test):
+//  GÜVEN BANDI %1 (kullanıcı: "güveni azıcık genişlet"): HMA'nın −%1 içine kapanış SAT DEĞİL (8h +%0.17) · −%1 altı kapanış SAT (8h −%2.40, −2.25/−2.62)
+//  YUKARI KIRILIM haftası alım −%2.87 (−2.41/−3.54) → takibe al, kovalama (≥%5 üstü −%7) · ERKEN günlük teyit (2–3 gün üstte) de negatif → verilmez
+//  ✓ KIRILIM SONRASI GERİ ÇEKİLME (son 8 haftada kırdı, HMA'nın %3 içine çekilip üstünde kapattı): 4h +%1.29 (0.90/1.88) · 8h +%3.00 (2.96/3.05) → EN İYİ ALIM
+//  ✓ TEYİT %1 toleranslı (kırılımdan sonraki hafta HMA×0.99 üstü): 8h +%1.14 (1.40/0.75) (katı 2 hafta: +1.18 ama test 0.00)
+//  Ölçülüp REDDEDİLEN öneriler: destek testi HMA yükselirken −%1.10 · aşama-2 birleşimi kırılımda −%5.19 · aşırı uzama %40–80 üstü POZİTİF (+%2.0) → "kâr al" verilmez
+//  · XU100 200 HMA rejimi: dönem boyunca hep üstünde → ölçülemedi.
 // w: haftalık mumlar (son mum = bu hafta; hafta içinde kısmi → "hafta kapanışında kesinleşir").
 function wma200Status(w) {
-  const a = (w || []).filter(b => b.close != null), j = a.length - 1; if (j < 202) return null;
-  const c = a.map(b => b.close), m = e => c.slice(e - 199, e + 1).reduce((p, v) => p + v, 0) / 200, w0 = m(j), w1 = m(j - 1), w2 = m(j - 2), d = (c[j] / w0 - 1) * 100, lv = +w0.toFixed(2);
-  if (c[j - 2] > w2 && c[j - 1] < w1 && c[j] < w0) return { k: "SAT", lv, d, t: `🔴 200 HMA TEYİTLİ AŞAĞI KIRILIM (2 hafta altında) → SAT/uzak dur · seviye ${lv} (ölçüm 8 hafta −%2.2)` };
-  if (c[j - 1] > w1 && c[j] < w0) return { k: "SAT", lv, d, t: `🔴 200 HMA AŞAĞI KIRILDI → SAT · seviye ${lv} (ölçüm 8 hafta −%1.6)` };
-  if (c[j - 2] < w2 && c[j - 1] > w1 && c[j] > w0) return { k: "AL", lv, d, t: `🟢 200 HMA TEYİTLİ YUKARI (2. hafta da üstünde) → AL (orta vade) · stop ${lv} altı haftalık kapanış (ölçüm 8 hafta +%0.9)` };
-  if (c[j - 1] < w1 && c[j] > w0) return { k: "BEKLE", lv, d, t: `⚠ 200 HMA İLK YUKARI KIRILIM → ${d >= 5 ? "KOVALAMA (≥%5 üstünde, ölçüm −%7)" : "ALMA, 2. haftalık kapanışı bekle (ilk kırılım ölçümü −%2.2)"} · seviye ${lv}` };
-  if (Math.abs(d) <= 3) return { k: "YAKIN", lv, d, t: `🧭 200 HMA'ya yakın (%${d.toFixed(1)}) · seviye ${lv} → altında haftalık kapanış SAT, üstünde 2 hafta kalırsa AL` };
+  const a = (w || []).filter(b => b.close != null), j = a.length - 1; if (j < 210) return null;
+  const c = a.map(b => b.close), m = e => c.slice(e - 199, e + 1).reduce((p, v) => p + v, 0) / 200, w0 = m(j), w1 = m(j - 1), w2 = m(j - 2), d = (c[j] / w0 - 1) * 100, lv = +w0.toFixed(2), band = +(w0 * 0.99).toFixed(2);
+  const below = c[j] < w0 * 0.99;
+  if (c[j - 2] > w2 && c[j - 1] < w1 && below) return { k: "SAT", lv, d, t: `🔴 200 HMA TEYİTLİ AŞAĞI KIRILIM → SAT/uzak dur · seviye ${lv} (ölçüm 8h −%2.4)` };
+  if (c[j - 1] > w1 && below) return { k: "SAT", lv, d, t: `🔴 200 HMA AŞAĞI KIRILDI (−%1 bandının altında) → SAT · seviye ${lv} (ölçüm 8h −%2.4)` };
+  if (c[j - 2] < w2 && c[j - 1] > w1 && c[j] > w0 * 0.99) return { k: "AL", lv, d, t: `🟢 200 HMA KIRILIMI TEYİT ETTİ (2. hafta da bandın üstünde) → AL (orta vade) · stop ${band}₺ altı haftalık kapanış (ölçüm 8h +%1.1; en iyi alım HMA'ya %3 yakın geri çekilmede)` };
+  if (c[j - 1] > w1 && c[j] < w0) return { k: "IZLE", lv, d, t: `🟡 200 HMA güven bandında (%${d.toFixed(1)}, −%1 içinde) → SAT DEĞİL; ${band}₺ altı haftalık kapanış SAT` };
+  let br = -1; for (let q = j - 8; q < j - 1; q++) if (c[q - 1] < m(q - 1) && c[q] > m(q)) br = q;
+  if (br > 0 && a[j].low != null && a[j].low <= w0 * 1.03 && c[j] > w0 && c.slice(br, j).every((v, i) => v > m(br + i) * 0.99))
+    return { k: "AL", lv, d, t: `🟢 200 HMA KIRILIM SONRASI GERİ ÇEKİLME → AL (orta vade) · stop ${band}₺ altı haftalık kapanış (ölçüm 4h +%1.3 · 8h +%3.0)` };
+  if (c[j - 1] < w1 && c[j] > w0) return { k: "KIRILIM", lv, d, t: `🔔 200 HMA YUKARI KIRILIM · seviye ${lv} → ${d >= 5 ? "KOVALAMA (≥%5 üstünde, ölçüm −%7)" : "takibe al: kırılım haftası alım ölçümü −%2.9"}; AL = HMA'ya %3 yakın geri çekilme (+%3.0/8h) veya 2. hafta teyidi` };
+  if (Math.abs(d) <= 3) return { k: "YAKIN", lv, d, t: `🧭 200 HMA'ya yakın (%${d.toFixed(1)}) · seviye ${lv} → ${band}₺ altı haftalık kapanış SAT · kırarsa geri çekilmede AL` };
   return null;
 }
 async function wmaScan() {
   const out = [];
   for (let i = 0; i < syms.length; i += CONC) await Promise.all(syms.slice(i, i + CONC).map(async s => { const r = wma200Status(await fetchWeekly(s).catch(() => [])); if (r && r.k !== "YAKIN") out.push({ sym: s, ...r }); }));
-  const o = { SAT: 0, AL: 1, BEKLE: 2 }; return out.sort((p, q) => o[p.k] - o[q.k]);
+  const o = { SAT: 0, AL: 1, KIRILIM: 2, IZLE: 3 }; return out.sort((p, q) => o[p.k] - o[q.k] || p.sym.localeCompare(q.sym));
 }
 // ⚡ KISA VADE AL (1–3 gün) — yalnız ölçülmüş kaynaklar (3g piyasaya göre): dönüş günü toparlanan +%1.48 · güçlü kapanış +%0.39 ·
 // trendde 3g düşüş +%0.26 · RSI2 (XU100 MA200 üstü) rastgeleye +%0.4. Dışlanan: gün ≤−%4 (−%1.25) ve endeks ≤−%1 iken ≥+%1 (−%1.0).
@@ -901,14 +965,26 @@ function kvList(k) {
   if (k.rev) take(k.top, "dönüş günü", 5);
   take(k.strong, "güçlü kapanış", 3);
   take(k.pull3, "trendde 3g düşüş", 3);
+  take((k.ew || []).filter(r => r.k === "ABC"), "Elliott ABC", 3);
   take((k.rsi2 || []).map(r => ({ sym: r.sym, c: r.c, dr: 0, atr: (r.c - r.stop) / 2 })), "RSI2 dönüşü", 3);
   return out.slice(0, 10);
+}
+function paMsg(k) {
+  const ew = (k.ew || []).slice(0, 8), w = k.paw || [], g = t => [...new Set(w.filter(x => t.includes(x.k)).map(x => x.sym))];
+  let m = "📐 FORMASYONLAR (10–20 gün; ölçümlü)";
+  m += ew.length ? "\n" + ew.map(r => `🟢 ${r.sym} · ${r.why} · giriş ${r.c}₺ · hedef ${r.tgt}₺ · stop ${r.stop}₺ (ölçüm ${r.m})`).join("\n") : "\nBugün Elliott ABC / 3. dalga kurulumu yok.";
+  const dip = g(["DIP", "DIV", "W"]), tz = g(["DTK!"]), dt = g(["DTK"]);
+  if (dip.length) m += `\n⚠ Dipten dönüş görünümü (ölçüm 10g −%1.2…−%2.2 → tek başına ALMA, Elliott teyidi bekle): ${dip.slice(0, 12).join(", ")}`;
+  if (tz.length) m += `\n⚠ Düşen trend kırılımı — sert düşüş sonrası hacimli (ölçüm 10g −%2.0, TUZAK): ${tz.slice(0, 12).join(", ")}`;
+  if (dt.length) m += `\n📐 Düşen trend kırılımı (ölçüm zayıf +%0.5/10g, tek başına alım değil): ${dt.slice(0, 12).join(", ")}`;
+  return m;
 }
 function shortTermMsg(k, final) {
   const kv = kvList(k);
   let m = `⚡ KISA VADE AL (1–3 gün)${final ? " — gün sonu" : ""}${k.rev ? `\n🔄 Endeks dönüş günü: XU100 gün içi ${pct(k.xLow)} → ${pct(k.xDay)} (ertesi gün ölçümü ort +%0.45)` : ""}`;
   m += kv.length ? "\n" + kv.map(r => `🟢 ${r.sym} · giriş ${r.c}₺ · hedef ${r.tgt}₺ · stop ${r.stop}₺ · ${r.why}`).join("\n") : "\nBugün ölçülmüş kısa vade AL koşulu oluşmadı.";
   if (final && k.ma20?.length) m += `\n📌 Yarın MA20 LİMİT ALIM (gün içi MA20'ye değerse; ölçüm aynı gün +%0.58, 3g +%0.45, en çok 5 gün):\n` + k.ma20.map(r => `🟢 ${r.sym} · limit ${r.lim}₺ (şu an %${r.dist.toFixed(1)} yukarıda) · hedef ${r.tgt}₺ · stop ${r.stop}₺`).join("\n");
+  if (final) m += "\n\n" + paMsg(k);
   m += `\n🧊 Uzak dur (gün ≤−%4; 3g piyasaya −%1.3): ` + (k.weak.length ? k.weak.map(r => `${r.sym} ${pct(r.dr)}`).join(", ") : "yok");
   if (!k.upMkt) m += "\n(RSI2 dönüşü yalnız XU100 MA200 üstündeyken — şu an kapalı)";
   return m;
@@ -955,7 +1031,16 @@ async function daySummary(st) {
   if (ls) m += `\n\n🦅 Son tarama: ${ls.al.length} AL · ${ls.sat.length} SAT${ls.al.length ? `\n   AL: ${ls.al.join(", ")}` : ""}`;
   m += `\n   Bugün ilk kez AL olan: ${alNew.join(", ") || "yok"}`;
   try { const k = await shortTermC(); if (k) m += "\n\n" + shortTermMsg(k, true); } catch (e) { console.error("Kısa vade:", e.message); }
-  try { const wl = await wmaScan(); _site.wma = wl; m += "\n\n🧭 200 HAFTALIK ORTALAMA (hafta kapanışında kesinleşir):\n" + (wl.length ? wl.slice(0, 12).map(r => `${r.sym}: ${r.t}`).join("\n") : "Bu hafta kırılım yok."); } catch (e) { console.error("200 HMA:", e.message); }
+  try { const wl = await wmaScan(); _site.wma = wl; const G = { AL: [], SAT: [], KIRILIM: [], IZLE: [] }; for (const r of wl) G[r.k].push(r);
+    const held = new Set([...Object.keys(st.pos || {}), ...(st.mp?.monthly || []).map(x => x.sym), ...(st.mp?.quarterly || []).map(x => x.sym), ...WATCH]);
+    const hit = wl.filter(r => r.k === "SAT" && held.has(r.sym));
+    m += "\n\n🧭 200 HAFTALIK ORTALAMA (hafta kapanışında kesinleşir · güven bandı −%1)";
+    if (hit.length) m += "\n⚠ PORTFÖY/TAKİP: " + hit.map(r => `${r.sym} 200 HMA ${r.lv}₺ altına kırdı → çık/azalt`).join(" · ");
+    m += G.AL.length ? "\n" + G.AL.slice(0, 10).map(r => `${r.sym}: ${r.t}`).join("\n") : "\n🟢 AL kurulumu yok (geri çekilme / teyit).";
+    if (G.SAT.length) m += `\n🔴 SAT (−%1 bandı altına kırdı; ölçüm 8h −%2.4): ${G.SAT.map(r => `${r.sym} ${r.lv}₺`).join(", ")}`;
+    if (G.KIRILIM.length) m += `\n🔔 YUKARI KIRILIM (takibe al; alım geri çekilmede): ${G.KIRILIM.map(r => `${r.sym} ${r.lv}₺${r.d >= 5 ? " (kovalama)" : ""}`).join(", ")}`;
+    if (G.IZLE.length) m += `\n🟡 Bantta (SAT değil, −%1 altı kapanış SAT): ${G.IZLE.map(r => `${r.sym} ${r.lv}₺`).join(", ")}`;
+  } catch (e) { console.error("200 HMA:", e.message); }
   return m + "\n\n⚠ Yatırım tavsiyesi değildir.";
 }
 async function runSummaryMode() {
@@ -973,12 +1058,13 @@ async function runSummaryMode() {
     }
     const k = await shortTermC();
     if (k) await ideasAdd(kvList(k).map(r => ({ k: "KV", sym: r.sym, d: k.day, e: r.c, s: r.stop, t: r.tgt, h: 3, why: r.why })));
+    if (k) await ideasAdd((k.ew || []).map(r => ({ k: "EW", sym: r.sym, d: k.day, e: r.c, s: r.stop, t: r.tgt, h: 20, why: r.why })));
     if (k?.ma20) st.ma20 = { made: k.day, items: k.ma20, hit: [] };   // ertesi işlem günü seansta izlenir
   } catch (e) { console.error("Fikir karnesi:", e.message); }
   const ok = await sendTG(await daySummary(st) + (karne ? "\n\n" + karne : ""));
   // site verisi: kısa vade, MA20 limit, 200 HMA, karne, model portföy (gün sonu)
-  try { const k = await shortTermC(); await siteSave({ kisa: k ? { day: k.day, rev: k.rev, xDay: k.xDay, upMkt: k.upMkt, al: kvList(k), ma20: k.ma20 || [], weak: k.weak.map(r => ({ sym: r.sym, dr: r.dr })) } : null,
-      wma: _site.wma || [], karne: karne || "", model: st.mp || null, mpHist: st.mpHist || [] }); } catch (e) { console.error("Site verisi:", e.message); }
+  try { const k = await shortTermC(); await siteSave({ kisa: k ? { day: k.day, rev: k.rev, xDay: k.xDay, upMkt: k.upMkt, al: kvList(k), ma20: k.ma20 || [], weak: k.weak.map(r => ({ sym: r.sym, dr: r.dr })), ew: (k.ew || []).slice(0, 12).map(r => ({ sym: r.sym, c: r.c, why: r.why, m: r.m, stop: r.stop, tgt: r.tgt })), paw: (k.paw || []).map(r => ({ sym: r.sym, k: r.k, t: r.t })) } : null,
+      wma: _site.wma || [], karne: karne || "", model: st.mp || null, mpHist: st.mpHist || [], mpPerf: await mpPerf(st).then(p => p && { m: { since: p.m.since, day: p.m.day }, q: { since: p.q.since, day: p.q.day }, xSince: p.xSince }).catch(() => null) }); } catch (e) { console.error("Site verisi:", e.message); }
   // HAFTALIK KARNE (Cuma): haftanın fikir karnesi + AI TRADER / model portföy / XU100 haftası — tek mesaj
   if (ok && new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", weekday: "short" }).format(new Date()) === "Fri") {
     try {
@@ -1017,7 +1103,7 @@ async function ideasEval() {
   await gistPut({ [IDEAS]: { content: JSON.stringify(b) } });
   return b;
 }
-const KN = { AL: "🔔 Yeni AL", TETIK: "🎯 Takip tetiği", KV: "⚡ Kısa vade AL", MA20: "📌 MA20 limit", DONUS: "🔄 Dönüş günü", GUCLU: "🚀 Güçlü kapanış", RSI2: "🔄 RSI2 dönüşü" };
+const KN = { AL: "🔔 Yeni AL", TETIK: "🎯 Takip tetiği", KV: "⚡ Kısa vade AL", MA20: "📌 MA20 limit", DONUS: "🔄 Dönüş günü", GUCLU: "🚀 Güçlü kapanış", RSI2: "🔄 RSI2 dönüşü", EW: "📐 Elliott" };
 function karneText(b, days) {
   const lim = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10), c = b.closed.filter(x => x.cd >= lim);
   if (!c.length) return `📒 KARNE (${days} gün): henüz sonuçlanan fikir yok · açık ${b.open.length}`;
@@ -1219,7 +1305,7 @@ async function main() {
           al: signals.filter(s => s.signal === "AL").sort((a, b) => gz(a) - gz(b) || b.confidence - a.confidence).map(siteRow),
           sat: signals.filter(s => s.signal === "SAT").sort((a, b) => gz(a) - gz(b) || b.confidence - a.confidence).map(siteRow) },
         takip: w.map(x => ({ sym: x.sym, text: x.text })),
-        trader: st ? { cash: st.cash, start: st.start, pos: Object.entries(st.pos || {}).map(([s, p]) => ({ sym: s, lot: p.lot, entry: p.entry, last: (signals.find(x => x.sym === s) || {}).price || p.entry, sl: p.sl, tp: p.tp, setup: p.setup })) } : null });
+        trader: st ? { closed: (st.trades || []).slice(0, 15).map(t => ({ sym: t.sym, entry: t.entry, exit: t.exit, pnlPct: t.pnlPct, reason: t.reason, open: t.open, close: t.close, setup: t.setup })), cash: st.cash, start: st.start, pos: Object.entries(st.pos || {}).map(([s, p]) => ({ sym: s, lot: p.lot, entry: p.entry, last: (signals.find(x => x.sym === s) || {}).price || p.entry, sl: p.sl, tp: p.tp, setup: p.setup })) } : null });
     } catch (e) { console.error("Site verisi:", e.message); }
 
     // 2) AI TRADER durumu (saatlik): yeni pozisyon?, açık pozisyonlar + açılıştan beri K/Z
@@ -1327,5 +1413,5 @@ if (import.meta.url === _entry) {
 export const _setWatchCache = v => { _wCache = v; };   // yalnız test
 export { shortCore };
 export { ideasAdd, ideasEval, ideasLoad, karneText, tuneMinConf, macroToday };
-export { candlePatterns, tierOf, rsi2Core, kvList, wma200Status, wmaScan };
+export { candlePatterns, tierOf, rsi2Core, kvList, wma200Status, wmaScan, paCore, zigzag };
 export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, ideaFor, daySummary, modelStatus, HELP, shortTerm, shortTermMsg, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };

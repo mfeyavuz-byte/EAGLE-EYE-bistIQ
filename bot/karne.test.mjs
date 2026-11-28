@@ -49,13 +49,29 @@ ok(macroToday("2026-12-03").includes("TÜİK enflasyon verisi 10:00"), "3 Aralı
 ok(macroToday("2026-12-10").includes("TCMB faiz kararı 14:00"), "10 Aralık 2026 → TCMB PPK");
 ok(macroToday("2027-01-04").includes("TÜİK enflasyon verisi 10:00") && !macroToday("2027-01-03").length, "3 Ocak 2027 Pazar → TÜİK 4 Ocak Pazartesi'ye kayar");
 ok(macroToday("2026-12-04").length === 0, "sıradan gün → boş");
-console.log("200 haftalık ortalama (wma200Status):");
+console.log("200 haftalık ortalama (wma200Status, güven bandı −%1):");
 {
-  const { wma200Status } = await import("./run.mjs"), W = tail => [...Array(210).fill(100), ...tail].map(c => ({ close: c }));
-  ok(wma200Status(W([102, 98])).k === "SAT" && wma200Status(W([102, 98, 97])).t.includes("TEYİTLİ AŞAĞI"), "üstten alta kapanış → SAT · 2. hafta da altında → TEYİTLİ SAT");
-  ok(wma200Status(W([98, 101])).k === "BEKLE" && wma200Status(W([98, 101])).t.includes("ALMA") && wma200Status(W([98, 108])).t.includes("KOVALAMA"), "ilk yukarı kırılım → ALMA (≥%5 üstündeyse KOVALAMA)");
-  ok(wma200Status(W([98, 101, 102])).k === "AL", "2. hafta da üstünde → AL (teyitli)");
+  const { wma200Status } = await import("./run.mjs"), W = tail => [...Array(215).fill(100), ...tail].map(c => ({ close: c, low: c }));
+  ok(wma200Status(W([102, 98])).k === "SAT" && wma200Status(W([102, 98, 97])).t.includes("TEYİTLİ AŞAĞI"), "−%1 bandının altına kapanış → SAT · 2. hafta da altında → TEYİTLİ SAT");
+  ok(wma200Status(W([102, 99.6])).k === "IZLE", "HMA'nın −%1 içine kapanış → IZLE (SAT değil)");
+  ok(wma200Status(W([98, 101])).k === "KIRILIM" && wma200Status(W([98, 108])).t.includes("KOVALAMA"), "ilk yukarı kırılım → KIRILIM (takibe al; ≥%5 üstündeyse KOVALAMA)");
+  ok(wma200Status(W([98, 101, 99.5])).k === "AL" && wma200Status(W([98, 101, 102])).k === "AL", "2. hafta bandın üstünde (−%1 tolerans) → AL teyit");
+  ok(wma200Status(W([98, 106, 107, 102.5])).t.includes("GERİ ÇEKİLME") && !wma200Status(W([98, 106, 98.5, 102.5]))?.t.includes("GERİ ÇEKİLME"), "kırılım sonrası %3 içine geri çekilme → AL · arada bandın altına indiyse → yok");
   ok(wma200Status(W([101, 101.5])).k === "YAKIN" && wma200Status(W([120, 121])) === null && wma200Status(W([]).slice(0, 150)) === null, "yakın → YAKIN · uzak → yok · kısa seri → yok");
+}
+console.log("Formasyonlar (paCore: Elliott ABC / 3. dalga / uyarılar):");
+{
+  const { paCore, zigzag } = await import("./run.mjs"), B = (c, h = c * 1.005, l = c * 0.995) => ({ close: c, high: h, low: l, volume: 1e6 });
+  const z = zigzag([100, 104, 108, 112, 100, 95, 101, 106].map(c => B(c, c, c)), 0.06);
+  ok(z.length === 2 && z[0].t === "H" && z[0].p === 112 && z[1].t === "L" && z[1].p === 95 && z[1].at === 6, "zigzag: tepe 112 (%6 düşüşle 4. günde onay), dip 95 (101 ≥ 95×1.06 → 6. günde onay) — gelecek sızmıyor");
+  // (zigzag ilk pivotu için başta %6+ düşüş) yükselen trend + ABC: H(130) → A(117) → B(124) → C(115) → B tepesi kırıldı
+  const up = [70, 66, 62, ...Array.from({ length: 140 }, (_, i) => 60 + i * 0.5)], abc = [125, 128, 130, 124, 118, 115, 119, 122, 125, 121, 117, 114, 118, 121, 124, 126];
+  const p = paCore([...up, ...abc].map(c => B(c, c, c)));
+  const x = p.al.find(r => r.k === "ABC");
+  ok(x && x.stop < 126 && x.tgt > 126 && x.stop >= 126 * 0.92, "yükselen trendde ABC bitti → AL · stop C dibi altında (en çok −%8) · hedef girişin üstünde (" + (x && `stop ${x.stop} hedef ${x.tgt}`) + ")");
+  const dn = paCore([...up, ...abc].map(c => B(c, c, c)).map((b, i, a) => i > 140 ? b : { ...b, close: 200 - i * 0.5, high: 200 - i * 0.5, low: 200 - i * 0.5 }));
+  ok(!dn.al.some(r => r.k === "ABC"), "aynı ABC düşen trendde → AL YOK");
+  ok(paCore(up.slice(0, 100).map(c => B(c))).al.length === 0, "kısa seri (<130 gün) → boş");
 }
 console.log(fail ? `\n❌ ${fail} BAŞARISIZ` : "\n✅ TÜM KARNE TESTLERİ GEÇTİ");
 process.exit(fail ? 1 : 0);
