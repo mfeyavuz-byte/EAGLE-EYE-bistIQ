@@ -88,17 +88,47 @@ async function sendTG(text) {
 // SADE SATIR (kullanıcı isteği 2026-11-28): yalnız giriş · hedef · stop. Seviyeler AI TRADER'ın kendi kuralı:
 // stop mesafesi = 2×ATR (ATR yoksa fiyatın %3'ü), hedef = 2 × stop mesafesi. SAT'ta yön ters (stop üstte, hedef altta).
 const lv = s => { const p = s.price, d = s.atr > 0 ? 2 * s.atr : p * 0.03, f = v => +v.toFixed(2); return s.signal === "SAT" ? { stop: f(p + d), tgt: f(Math.max(0.01, p - 2 * d)) } : { stop: f(p - d), tgt: f(p + 2 * d) }; };
-const sigLine = s => { const l = lv(s); return `${s.sym} · giriş ${s.price}₺ · hedef ${l.tgt}₺ · stop ${l.stop}₺`; };
+// MUM YAPILARI (Dantes videosu; 2 yıl BIST ölçümünde TEK BAŞINA avantajı yok → yalnız GÜÇ KADEMESİNDE teyitlerden biri, mesajda adı geçmez).
+// Son mum = değerlendirilen gün. bobin: önceki 4–6 mum ardışık zıt renk, gövdeli (gövde/aralık ≥0.45), boyları benzer (≤4×); kırılım mumu
+// kutunun (iğneler dahil) dışına güçlü kapanış. at nalı: kırmızı-yeşil-kırmızı-YEŞİL, 4. en büyük gövde, 2≈3 küçük, 1 ortada (düşüşte tersi).
+function candlePatterns(a) {
+  const j = a.length - 1, out = { up: false, dn: false }; if (j < 8) return out;
+  const body = b => Math.abs(b.close - b.open), rng = b => Math.max(1e-9, b.high - b.low), G = b => b.close > b.open, R = b => b.close < b.open, t = a[j];
+  for (const n of [6, 5, 4]) {
+    const box = a.slice(j - n, j); let ok = box.every(b => body(b) / rng(b) >= 0.45 && b.close !== b.open);
+    for (let k = 1; ok && k < n; k++) if (G(box[k]) === G(box[k - 1])) ok = false;
+    const bs = box.map(body); if (!ok || Math.max(...bs) / Math.max(1e-9, Math.min(...bs)) > 4) continue;
+    const top = Math.max(...box.map(b => b.high)), bot = Math.min(...box.map(b => b.low)), avgB = bs.reduce((x, y) => x + y, 0) / n, strong = body(t) / rng(t) >= 0.6 && body(t) >= avgB;
+    if (t.close > top && G(t) && (strong || t.open > top)) out.up = true;
+    if (t.close < bot && R(t) && (strong || t.open < bot)) out.dn = true;
+    break;
+  }
+  const [m1, m2, m3, m4] = [a[j - 3], a[j - 2], a[j - 1], t], [b1, b2, b3, b4] = [m1, m2, m3, m4].map(body), mid = Math.max(b2, b3) / Math.max(1e-9, Math.min(b2, b3)) <= 1.5;
+  if (R(m1) && G(m2) && R(m3) && G(m4) && b4 > b1 && b1 > Math.max(b2, b3) && mid) out.up = true;
+  if (G(m1) && R(m2) && G(m3) && R(m4) && b4 > b1 && b1 > Math.max(b2, b3) && mid) out.dn = true;
+  return out;
+}
+// GÜÇ KADEMESİ: AL'de 4 teyitten en az 2'si → GÜÇLÜ AL; SAT'ta gün ≤−%4 → GÜÇLÜ SAT (ölçüme göre). Teyitler (ölçülenler + video): güven ≥85 (backtest: 85+ grubu en iyi) · mum yapısı (bobin/at nalı)
+// · gün kapanışı (AL: ≥+%4, tepeye yakın, hacimli — ölçüm +; SAT: gün ≤−%4 — ölçüm: düşüş sürüyor) · trend (AL: MA50>MA200 ve fiyat MA50 üstü
+// — Stage-2 mantığı; SAT: MA50<MA200 ve fiyat MA50 altı).
+// ÖLÇÜM (12 ay, her 3 günde tarama, 10g getiri − piyasa): GÜÇLÜ AL +%1.60 (yarılar +1.70/+1.49) vs AL +%0.30 (+1.54/−0.93).
+// SAT teyitleri tek tek: gün ≤−%4 −%0.88 (−1.76/−0.00) ✓ · güven≥85 +0.10 · düşüş trendi +0.03 · mum yapısı aşağı +7.0 (n=6, ters!) → GÜÇLÜ SAT = SAT + gün ≤−%4.
+function tierOf(s) {
+  if (s.signal === "SAT") return s.bigDrop ? "GÜÇLÜ SAT" : "SAT";
+  return [(s.confidence || 0) >= 85, !!s.pUp, !!s.strongClose, !!s.trendUp].filter(Boolean).length >= 2 ? "GÜÇLÜ AL" : "AL";
+}
+const sigLine = s => { const l = lv(s), t = tierOf(s); return `${t.startsWith("GÜÇLÜ") ? (s.signal === "AL" ? "🟢🟢" : "🔴🔴") : (s.signal === "AL" ? "🟢" : "🔴")} ${s.sym} ${t} · giriş ${s.price}₺ · hedef ${l.tgt}₺ · stop ${l.stop}₺`; };
 const SHOW = 5;   // mesajda taraf başına en güçlü 5 (tam liste: /tara)
 function buildScanMsg(signals, gErr = 0, newSet = null, full = false) {   // newSet: bugün İLK KEZ AL olanlar → 🆕
   const _as = s => (s.confidence || 0) + (s.er || 0) * 8 + (s.preMom || 0) * 0.4 + (s.ret60 || 0) * 0.3;
-  const AL = signals.filter(s => s.signal === "AL").sort((a, b) => (!!a.secWeak - !!b.secWeak) || _as(b) - _as(a)), SA = signals.filter(s => s.signal === "SAT");
+  const gz = s => tierOf(s).startsWith("GÜÇLÜ") ? 0 : 1;   // GÜÇLÜ olanlar önce
+  const AL = signals.filter(s => s.signal === "AL").sort((a, b) => (gz(a) - gz(b)) || (!!a.secWeak - !!b.secWeak) || _as(b) - _as(a)), SA = signals.filter(s => s.signal === "SAT").sort((a, b) => (gz(a) - gz(b)) || (b.confidence || 0) - (a.confidence || 0));
   const f = s => (newSet?.has(s.sym) ? "🆕 " : "") + sigLine(s);
   const sec = (title, arr) => { if (!arr.length) return ""; const n = full ? arr.length : Math.min(SHOW, arr.length);
     return `\n\n${title}${arr.length > n ? ` — en güçlü ${n} (toplam ${arr.length})` : ""}:\n` + arr.slice(0, n).map(f).join("\n"); };
   let m = "🦅 EAGLE EYE — HİSSE TARA (motor)\n" + fmtTime();
   if (!signals.length) m += "\n\n⚠ Tarama 0 sinyal döndü — Yahoo/veri kaynağı geçici sorun olabilir.";
-  m += sec("🟢 AL", AL) + sec("🔴 SAT", SA);
+  m += sec(`🟢 AL — ${AL.filter(s => !gz(s)).length} GÜÇLÜ`, AL) + sec(`🔴 SAT — ${SA.filter(s => !gz(s)).length} GÜÇLÜ`, SA);
   if (!full && (AL.length > SHOW || SA.length > SHOW)) m += "\n\nTam liste: /tara";
   if (_staleNote) m += "\n\n" + _staleNote;
   if (_macroNote) m += "\n\n" + _macroNote;
@@ -162,6 +192,10 @@ async function scanOne(sym, io = { fetchDaily, fetchWeekly }) {
   const _tightB = _blo > 0 && (_bhi - _blo) / _blo < 0.40, breakout = (_tightB && last.close > _bhi * 1.005 && (last.volume || 0) > avgVol * 1.3) ? 1 : 0, boTarget = breakout ? +(_bhi + (_bhi - _blo)).toFixed(2) : null;
   const weekly = await io.fetchWeekly(sym);                            // ÜST TREND = haftalık
   const k = getSignals(ed, getHigherTrend(weekly), weekly);
+  // güç kademesi girdileri (tierOf): mum yapısı · gün kapanışı · trend
+  const _pc = daily[daily.length - 2]?.close, _dr = _pc ? (last.close / _pc - 1) * 100 : 0, _pos = last.high > last.low ? (last.close - last.low) / (last.high - last.low) : 0.5, _cp = candlePatterns(daily);
+  const _tierIn = { pUp: _cp.up, pDn: _cp.dn, strongClose: _dr >= 4 && _pos >= 0.8 && (last.volume || 0) >= avgVol * 1.5, bigDrop: _dr <= -4,
+    trendUp: !!(last.ma50 && last.ma200 && last.ma50 > last.ma200 && last.close > last.ma50), trendDn: !!(last.ma50 && last.ma200 && last.ma50 < last.ma200 && last.close < last.ma50) };
   const aboveMa50 = !!(last.ma50 && last.close > last.ma50);
   // TOBO (ters omuz-baş-omuz) boyun kırılımı — DENEY (yalnız simülatör io.opts.tobo; canlıda kapalı)
   if (io.opts?.tobo) {
@@ -187,7 +221,7 @@ async function scanOne(sym, io = { fetchDaily, fetchWeekly }) {
   if (!off.vol && !isDip && k.final === "AL" && (last.volume || 0) < avgVol * 0.7) return null; // hacim kuruması = teyitsiz AL
   if (!off.rsi && !isDip && k.final === "AL" && (last.rsi || 0) >= 63) return null; // aşırı-alımda/geç girişi ele (backtest: erken giriş %42 vs geç %34)
   return { sym, signal: k.final, confidence: k.confidence, price: last.close, dip: isDip ? (k.dipSignal.score || 0) : 0, atr: (last.atr && last.atr > 0) ? last.atr : null, avgVol: Math.round(avgVol), er: _er, preMom, rets20: _rs20, breakout, boTarget,
-           stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend, ret60: +ret60.toFixed(1), aboveMa50, rr: (k.target1 && k.stopLoss && last.close > k.stopLoss) ? +((k.target1 - last.close) / (last.close - k.stopLoss)).toFixed(2) : 0 };
+           stopLoss: k.stopLoss, target1: k.target1, mod: k.mod, adx: Math.round(k.adx || 0), htf: k.higherTrend, ret60: +ret60.toFixed(1), aboveMa50, ..._tierIn, rr: (k.target1 && k.stopLoss && last.close > k.stopLoss) ? +((k.target1 - last.close) / (last.close - k.stopLoss)).toFixed(2) : 0 };
 }
 async function scanAll(io) {   // io verilmezse canlı Yahoo (scanOne varsayılanı)
   const out = [];
@@ -685,8 +719,8 @@ async function ideaFor(sym, signals, bearRegime, st) {
     const trend = e.ma50 && e.ma200 ? (c > e.ma50 && e.ma50 > e.ma200 ? "yükseliş" : c < e.ma50 && e.ma50 < e.ma200 ? "düşüş" : "yatay/karışık") : "belirsiz";
     let head, plan, trig = null, mark;   // trig: { t: tür, hit: geçildi mi, text }
     const why = k && k.final !== "NÖTR" ? ` (motor ${k.final} %${k.confidence}, kalite filtresini geçmedi)` : "";
-    if (live?.signal === "AL") { mark = "🟢"; head = `🟢 AL (bot sinyali · güven %${live.confidence})`; plan = `Giriş ~${c}₺ · stop ${live.stopLoss} · hedef ${live.target1}${bearRegime && !live.dip ? " · ⚠ düşüş rejimi: AI TRADER yalnız dip alıyor, küçük pozisyon" : ""}`; }
-    else if (live?.signal === "SAT") { mark = "🔴"; head = `🔴 SAT (bot sinyali · güven %${live.confidence})`; plan = `Elde varsa çık/azalt, yeni alım yok. İlk dönüş teyidi: MA20 ${ma20.toFixed(2)}₺ üstü kapanış (güçlü teyit ${hi20}₺).`; trig = { t: "ma20", hit: c > ma20, text: `MA20 ${ma20.toFixed(2)}₺ üstüne çıktı (SAT'tan ilk dönüş teyidi)` }; }
+    if (live?.signal === "AL") { mark = tierOf(live).startsWith("GÜÇLÜ") ? "🟢🟢" : "🟢"; head = `${mark} ${tierOf(live)} (bot sinyali · güven %${live.confidence})`; plan = `Giriş ~${c}₺ · stop ${live.stopLoss} · hedef ${live.target1}${bearRegime && !live.dip ? " · ⚠ düşüş rejimi: AI TRADER yalnız dip alıyor, küçük pozisyon" : ""}`; }
+    else if (live?.signal === "SAT") { mark = tierOf(live).startsWith("GÜÇLÜ") ? "🔴🔴" : "🔴"; head = `${mark} ${tierOf(live)} (bot sinyali · güven %${live.confidence})`; plan = `Elde varsa çık/azalt, yeni alım yok. İlk dönüş teyidi: MA20 ${ma20.toFixed(2)}₺ üstü kapanış (güçlü teyit ${hi20}₺).`; trig = { t: "ma20", hit: c > ma20, text: `MA20 ${ma20.toFixed(2)}₺ üstüne çıktı (SAT'tan ilk dönüş teyidi)` }; }
     else if (trend === "düşüş" && e.ma50) { mark = "⚪"; head = `⚪ BEKLE${why}`; plan = `Düşüş trendinde alım yok; önce MA50 ${e.ma50.toFixed(2)}₺ üstü kapanış gerekir. Destek 20g dip ${lo20}₺.`; trig = { t: "ma50", hit: c > e.ma50, text: `MA50 ${e.ma50.toFixed(2)}₺ üstüne çıktı (düşüş trendinden çıkış denemesi)` }; }
     else { mark = "⚪"; head = `⚪ BEKLE${why}`; plan = `Alım tetiği: ${hi20}₺ üstü hacimli kapanış · destek MA20 ${ma20.toFixed(2)}₺ / 20g dip ${lo20}₺.`; trig = { t: "hi20", hit: c > hi20, text: `20g zirve ${hi20}₺ üstüne çıktı (alım tetiği)` }; }
     const en = await earnDays(sym, st);
@@ -794,7 +828,23 @@ function shortCore(data, x) {
   }
   return { day: istDayOf(xt.ts), rev: xt.low <= xp * 0.99 && xt.close > xp, xDay: (xt.close / xp - 1) * 100, xLow: (xt.low / xp - 1) * 100,
     top: [...rows].sort((p, q) => q.rec - p.rec).slice(0, 10), strong: rows.filter(r => r.dr >= 4 && r.pos >= 0.8 && r.vr >= 1.5).sort((p, q) => q.dr - p.dr).slice(0, 10),
-    weak: rows.filter(r => r.dr <= -4).sort((p, q) => p.dr - q.dr).slice(0, 10), weakSet: new Set(rows.filter(r => r.dr <= -4).map(r => r.sym)) };
+    weak: rows.filter(r => r.dr <= -4).sort((p, q) => p.dr - q.dr).slice(0, 10), weakSet: new Set(rows.filter(r => r.dr <= -4).map(r => r.sym)), ...rsi2Core(data, x) };
+}
+// RSI2 AŞIRI SATIM DÖNÜŞÜ (ABD botundan; BIST ölçümü 2 yıl): hisse 200g üstünde + RSI(2) < 5 → giriş kapanış, hedef 10g ort., stop −2 ATR, en çok 10 gün.
+// YALNIZ XU100 kendi 200g ortalamasının ÜSTÜNDEYKEN: +%0.12 (rastgele −%0.27 → +%0.4 fark), %64 kazanma. ALTINDA −%10.9 → liste verilmez.
+function rsi2Core(data, x) {
+  const xc = (x || []).map(b => b.close), up = xc.length >= 200 && xc.at(-1) > xc.slice(-200).reduce((p, v) => p + v, 0) / 200, list = [];
+  if (up) for (const [s, a] of Object.entries(data)) {
+    const j = a.length - 1; if (j < 210 || istDayOf(a[j].ts) !== istDayOf(x.at(-1).ts)) continue;
+    const c = a.map(b => b.close), v20 = a.slice(j - 20, j).reduce((p, b) => p + (b.volume || 0), 0) / 20; if (v20 * c[j] < 5e6) continue;
+    if (!(c[j] > c.slice(j - 199, j + 1).reduce((p, v) => p + v, 0) / 200)) continue;
+    let g = 0, l = 0; for (let i = j - 9, k = 0; i <= j; i++, k++) { const d = c[i] - c[i - 1], u = Math.max(d, 0), w = Math.max(-d, 0); if (k < 2) { g += u / 2; l += w / 2; } else { g = (g + u) / 2; l = (l + w) / 2; } }
+    const r2 = l === 0 ? 100 : 100 - 100 / (1 + g / l); if (r2 >= 5) continue;
+    let tr = 0; for (let k = j - 13; k <= j; k++) tr += Math.max(a[k].high - a[k].low, Math.abs(a[k].high - c[k - 1]), Math.abs(a[k].low - c[k - 1]));
+    const atr = tr / 14, s10 = c.slice(j - 9, j + 1).reduce((p, v) => p + v, 0) / 10;
+    list.push({ sym: s, c: c[j], r2: +r2.toFixed(1), stop: +(c[j] - 2 * atr).toFixed(2), tgt: +Math.max(s10, c[j] * 1.01).toFixed(2) });
+  }
+  return { upMkt: up, rsi2: list.sort((p, q) => p.r2 - q.r2).slice(0, 8) };
 }
 let _stCache;   // bir çalışmada tek hesap (takip listesi + dönüş uyarısı + gün sonu aynı veriyi kullanır)
 const shortTermC = async () => _stCache !== undefined ? _stCache : (_stCache = await shortTerm().catch(() => null));
@@ -810,6 +860,7 @@ function shortTermMsg(k, final) {
   if (k.rev) m += `\n🔄 ENDEKS DÖNÜŞ GÜNÜ: XU100 gün içi ${pct(k.xLow)} → ${pct(k.xDay)}\n   Dipten en çok toparlananlar (ölçüm: 3 günde piyasayı ort. +%1.5 geçti; 18 gün, küçük örnek):\n   ` + k.top.map(stLine).join("\n   ")
     + `\n   Ertesi gün XU100 ölçümü: ort +%0.45, %56 yükseliş.`;
   m += `\n🚀 Güçlü kapanış (gün ≥+%4, tepeye yakın, hacimli; 3g piyasaya +%0.4): ` + (k.strong.length ? "\n   " + k.strong.map(r => `${r.sym} ${r.c}₺ ${pct(r.dr)}`).join("\n   ") : "bugün yok");
+  m += `\n🔄 Aşırı satım dönüşü (RSI2<5, 200g üstü; yalnız XU100 MA200 üstünde — ölçüm rastgeleye +%0.4, %64 kazanma): ` + (!k.upMkt ? "piyasa MA200 altında → liste yok (bu koşulda ölçüm −%10.9)" : k.rsi2?.length ? "\n   " + k.rsi2.map(r => `${r.sym} giriş ${r.c}₺ · hedef ${r.tgt}₺ · stop ${r.stop}₺ · en çok 10 gün`).join("\n   ") : "bugün yok");
   m += `\n🧊 Uzak dur (gün ≤−%4; 3g piyasaya −%1.3, dipten alma): ` + (k.weak.length ? k.weak.map(r => `${r.sym} ${pct(r.dr)}`).join(", ") : "bugün yok");
   return m;
 }
@@ -872,9 +923,21 @@ async function runSummaryMode() {
     }
     const k = await shortTermC();
     if (k) { const items = [...(k.rev ? k.top.map(r => ({ ...r, kk: "DONUS" })) : []), ...k.strong.map(r => ({ ...r, kk: "GUCLU" }))];
-      await ideasAdd(items.filter(r => r.atr > 0).map(r => ({ k: r.kk, sym: r.sym, d: k.day, e: r.c, s: +(r.c - 2 * r.atr).toFixed(2), t: +(r.c + 4 * r.atr).toFixed(2), h: 3 }))); }
+      await ideasAdd([...items.filter(r => r.atr > 0).map(r => ({ k: r.kk, sym: r.sym, d: k.day, e: r.c, s: +(r.c - 2 * r.atr).toFixed(2), t: +(r.c + 4 * r.atr).toFixed(2), h: 3 })),
+        ...(k.rsi2 || []).map(r => ({ k: "RSI2", sym: r.sym, d: k.day, e: r.c, s: r.stop, t: r.tgt, h: 10 }))]); }
   } catch (e) { console.error("Fikir karnesi:", e.message); }
   const ok = await sendTG(await daySummary(st) + (karne ? "\n\n" + karne : ""));
+  // HAFTALIK KARNE (Cuma): haftanın fikir karnesi + AI TRADER / model portföy / XU100 haftası — tek mesaj
+  if (ok && new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Istanbul", weekday: "short" }).format(new Date()) === "Fri") {
+    try {
+      const b = await ideasLoad(), eqL = st.equityLog || [], w0 = eqL.length > 5 ? eqL[eqL.length - 6].eq : eqL[0]?.eq, w1 = eqL.at(-1)?.eq;
+      const x = await fetchDaily("XU100").catch(() => []), xw = x.length > 5 ? (x.at(-1).close / x.at(-6).close - 1) * 100 : null, p = await mpPerf(st);
+      await sendTG(`📅 HAFTALIK KARNE · ${fmtTime()}\n\n` + (b ? karneText(b, 7) : "Karne okunamadı.")
+        + `\n\n📊 AI TRADER hafta: ${w0 && w1 ? pct((w1 / w0 - 1) * 100) : "?"} · 🏛 XU100 hafta: ${pct(xw)}`
+        + (p ? `\n💼 Model portföy (${st.mp.date} tarihinden beri): aylık ${pct(p.m.since)} · 3 aylık ${pct(p.q.since)} · XU100 ${pct(p.xSince)}` : "")
+        + "\n\n⚠ Yatırım tavsiyesi değildir.");
+    } catch (e) { console.error("Haftalık karne:", e.message); }
+  }
   if (ok) { st.lastSummaryDay = istD; await gistPut({ [PAPER_FILE]: { content: JSON.stringify(st) } }); }
   console.log(`Gün sonu özeti ${ok ? "gönderildi" : "GÖNDERİLEMEDİ"}`);
 }
@@ -902,7 +965,7 @@ async function ideasEval() {
   await gistPut({ [IDEAS]: { content: JSON.stringify(b) } });
   return b;
 }
-const KN = { AL: "🔔 Yeni AL", TETIK: "🎯 Takip tetiği", DONUS: "🔄 Dönüş günü", GUCLU: "🚀 Güçlü kapanış" };
+const KN = { AL: "🔔 Yeni AL", TETIK: "🎯 Takip tetiği", DONUS: "🔄 Dönüş günü", GUCLU: "🚀 Güçlü kapanış", RSI2: "🔄 RSI2 dönüşü" };
 function karneText(b, days) {
   const lim = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10), c = b.closed.filter(x => x.cd >= lim);
   if (!c.length) return `📒 KARNE (${days} gün): henüz sonuçlanan fikir yok · açık ${b.open.length}`;
@@ -1036,7 +1099,7 @@ async function main() {
     }
   }
   // Son taramanın özeti (gün sonu özeti için): AL/SAT listeleri + takip hisselerinin canlı sinyali
-  if (st) { st.lastScan = { t: Date.now(), al: signals.filter(s => s.signal === "AL").map(s => s.sym), sat: signals.filter(s => s.signal === "SAT").map(s => s.sym), w: Object.fromEntries(signals.filter(s => WATCH.includes(s.sym)).map(s => [s.sym, { signal: s.signal, confidence: s.confidence, stopLoss: s.stopLoss, target1: s.target1, dip: s.dip }])) }; dirty = true; }
+  if (st) { st.lastScan = { t: Date.now(), al: signals.filter(s => s.signal === "AL").map(s => s.sym), sat: signals.filter(s => s.signal === "SAT").map(s => s.sym), w: Object.fromEntries(signals.filter(s => WATCH.includes(s.sym)).map(s => [s.sym, { signal: s.signal, confidence: s.confidence, stopLoss: s.stopLoss, target1: s.target1, dip: s.dip, price: s.price, atr: s.atr, pUp: s.pUp, pDn: s.pDn, strongClose: s.strongClose, bigDrop: s.bigDrop, trendUp: s.trendUp, trendDn: s.trendDn }])) }; dirty = true; }
   // BOT DURDU UYARISI (ABD botundan): seans içinde aynı gün önceki çalışmadan 45 dk+ geçtiyse (GitHub zamanlayıcı gecikmesi) bildir
   if (st) {
     const prev = st.lastRunAt;
@@ -1171,4 +1234,5 @@ if (import.meta.url === _entry) {
 export const _setWatchCache = v => { _wCache = v; };   // yalnız test
 export { shortCore };
 export { ideasAdd, ideasEval, ideasLoad, karneText, tuneMinConf, macroToday };
+export { candlePatterns, tierOf, rsi2Core };
 export { runPaper, heldInfo, sigLine, watchMsg, watchAlerts, ideaFor, daySummary, modelStatus, HELP, shortTerm, shortTermMsg, scanOne, scanAll, marketContext, perfStats, setupStats, disabledSetups, setupPauses, riskMult, setupOf, sendTG, buildScanMsg, mcpEnrich, scanIndices, aiDaily, handleCommands };

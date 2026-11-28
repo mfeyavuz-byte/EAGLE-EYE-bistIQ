@@ -15,14 +15,14 @@ const symsIn = m => new Set(m.match(/\bQ[A-Z]{3}\b/g) || []);
 console.log("HİSSE TARA — sade (en güçlü 5 + toplam) ve /tara tam liste:");
 for (const [nA, nS] of [[1, 81], [3, 118], [60, 135], [4, 3]]) {
   const sig = [...mk(nA, "AL"), ...mk(nS, "SAT", 500)], m = buildScanMsg(sig), full = buildScanMsg(sig, 0, null, true);
-  const L = m.split("\n").filter(l => /^Q[A-Z]{3} · giriş/.test(l)), F = full.split("\n").filter(l => /^Q[A-Z]{3} · giriş/.test(l));
+  const L = m.split("\n").filter(l => /^\S+ Q[A-Z]{3} (GÜÇLÜ )?(AL|SAT) · giriş/.test(l)), F = full.split("\n").filter(l => /^\S+ Q[A-Z]{3} (GÜÇLÜ )?(AL|SAT) · giriş/.test(l));
   ok(L.length === Math.min(5, nA) + Math.min(5, nS) && (nA <= 5 || m.includes(`toplam ${nA}`)) && (nS <= 5 || m.includes(`toplam ${nS}`)), `${nA} AL / ${nS} SAT → mesajda ${L.length} satır, başlıkta toplam`);
   ok(F.length === nA + nS && symsIn(full).size === nA + nS, `  /tara tam liste: ${F.length}/${nA + nS} hisse`);
-  ok(L.every(l => /^Q[A-Z]{3} · giriş [\d.]+₺ · hedef [\d.]+₺ · stop [\d.]+₺$/.test(l)), "  her satır YALNIZ giriş · hedef · stop");
+  ok(L.every(l => /^\S+ Q[A-Z]{3} (GÜÇLÜ )?(AL|SAT) · giriş [\d.]+₺ · hedef [\d.]+₺ · stop [\d.]+₺$/.test(l)), "  her satır YALNIZ giriş · hedef · stop");
 }
 {
   const [a] = mk(1, "AL"), [sa] = mk(1, "SAT", 500); a.atr = 1; sa.atr = 1; a.price = sa.price = 50;
-  const la = buildScanMsg([a]).split("\n").find(l => l.startsWith(a.sym)), ls = buildScanMsg([sa]).split("\n").find(l => l.startsWith(sa.sym));
+  const la = buildScanMsg([a]).split("\n").find(l => l.includes(a.sym + " ")), ls = buildScanMsg([sa]).split("\n").find(l => l.includes(sa.sym + " "));
   ok(la.endsWith("giriş 50₺ · hedef 54₺ · stop 48₺") && ls.endsWith("giriş 50₺ · hedef 46₺ · stop 52₺"), "AL: stop 2ATR altta, hedef 2R üstte · SAT: ters yön (" + ls.split(" · ").slice(1).join(" · ") + ")");
   ok(buildScanMsg([]).includes("Tarama 0 sinyal") && buildScanMsg(mk(1, "AL"), 401).includes("⛔ GIST ERİŞİLEMİYOR (HTTP 401)"), "0 sinyal ve gist hatası satırları korunuyor");
 }
@@ -74,6 +74,14 @@ console.log("Takip listesi TETİK uyarısı (alttan üste geçiş, günde 1):");
   ok(n === 0 && got.length === 1, "aynı gün tekrar alttan üste geçse de ikinci uyarı YOK (günde 1)");
   const st2 = {}; _setWatchCache(W(true)); n = await watchAlerts([], false, st2);
   ok(n === 0 && st2.watchPrev.YEOTK === "ma50:1", "ilk kez görülen (önceki durum yok) → uyarı yok, sadece kaydedilir");
+}
+console.log("Güç kademesi (GÜÇLÜ AL / AL / GÜÇLÜ SAT / SAT):");
+{
+  const { tierOf } = await import("./run.mjs");
+  ok(tierOf({ signal: "AL", confidence: 90, trendUp: true }) === "GÜÇLÜ AL" && tierOf({ signal: "AL", confidence: 90 }) === "AL" && tierOf({ signal: "AL", confidence: 70, pUp: true, strongClose: true }) === "GÜÇLÜ AL", "AL: 4 teyitten ≥2 → GÜÇLÜ AL, tek teyit → AL");
+  ok(tierOf({ signal: "SAT", bigDrop: true }) === "GÜÇLÜ SAT" && tierOf({ signal: "SAT", confidence: 95, trendDn: true, pDn: true }) === "SAT", "SAT: yalnız gün ≤−%4 → GÜÇLÜ SAT (ölçülen tek çalışan teyit)");
+  const m = buildScanMsg([{ sym: "QAAA", signal: "AL", confidence: 70, price: 10, atr: 0.5 }, { sym: "QBBB", signal: "AL", confidence: 90, trendUp: true, price: 10, atr: 0.5 }]);
+  ok(m.indexOf("QBBB") < m.indexOf("QAAA") && m.includes("🟢🟢 QBBB GÜÇLÜ AL · giriş") && m.includes("🟢 AL — 1 GÜÇLÜ"), "GÜÇLÜ olan önce, başlıkta GÜÇLÜ sayısı");
 }
 console.log(fail ? `\n❌ ${fail} BAŞARISIZ` : "\n✅ TÜM TELEGRAM TESTLERİ GEÇTİ");
 process.exit(fail ? 1 : 0);
